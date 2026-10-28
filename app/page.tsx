@@ -1,69 +1,937 @@
-import Image from "next/image";
+"use client";
+
+import { useCallback, useEffect, useState, type FormEvent } from "react";
+import {
+  AlertCircle,
+  CalendarDays,
+  CheckCircle2,
+  LoaderCircle,
+  Mail,
+  Plus,
+  Send,
+  Trash2,
+  Users,
+  X,
+} from "lucide-react";
+import { supabase } from "@/lib/supabase";
+import type {
+  Configuracao,
+  DataApresentacao,
+  NovoAluno,
+  NovoGrupo,
+} from "@/types/database";
+
+type LimitesInscricao = Pick<
+  Configuracao,
+  "limite_alunos_min" | "limite_alunos_max" | "permitir_inscricoes"
+>;
+
+interface MembroFormulario {
+  nome: string;
+  matricula: string;
+  email: string;
+}
+
+interface GrupoFormulario {
+  nome_grupo: string;
+  disciplina: string;
+  turma: string;
+  tema_projeto: string;
+  data_apresentacao_id: string;
+}
+
+const disciplinas = [
+  "Back-End Frameworks",
+  "Estrutura de Dados",
+  "Sistemas Operacionais",
+  "Big Data",
+];
+
+const formularioInicial: GrupoFormulario = {
+  nome_grupo: "",
+  disciplina: "",
+  turma: "",
+  tema_projeto: "",
+  data_apresentacao_id: "",
+};
+
+const membroInicial = (): MembroFormulario => ({
+  nome: "",
+  matricula: "",
+  email: "",
+});
+
+function isLimitesInscricao(value: unknown): value is LimitesInscricao {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const config = value as Record<string, unknown>;
+  return (
+    typeof config.limite_alunos_min === "number" &&
+    Number.isInteger(config.limite_alunos_min) &&
+    config.limite_alunos_min > 0 &&
+    typeof config.limite_alunos_max === "number" &&
+    Number.isInteger(config.limite_alunos_max) &&
+    config.limite_alunos_max >= config.limite_alunos_min &&
+    typeof config.permitir_inscricoes === "boolean"
+  );
+}
+
+function isDataApresentacao(value: unknown): value is DataApresentacao {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const data = value as Record<string, unknown>;
+  return (
+    typeof data.id === "string" &&
+    typeof data.data_hora === "string" &&
+    typeof data.disciplina === "string" &&
+    typeof data.turma === "string" &&
+    typeof data.vagas_totais === "number" &&
+    typeof data.vagas_ocupadas === "number"
+  );
+}
+
+function formatarData(dataHora: string): string {
+  const data = new Date(dataHora);
+
+  if (Number.isNaN(data.getTime())) {
+    return dataHora;
+  }
+
+  const dataFormatada = new Intl.DateTimeFormat("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    timeZone: "America/Sao_Paulo",
+  }).format(data);
+  const horaFormatada = new Intl.DateTimeFormat("pt-BR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+    timeZone: "America/Sao_Paulo",
+  }).format(data);
+
+  return `${dataFormatada} - ${horaFormatada}`;
+}
+
+function obterMensagemErro(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return "Ocorreu um erro inesperado. Tente novamente.";
+}
+
+function validarMembro(
+  membro: MembroFormulario,
+  indice: number,
+): string | null {
+  if (!membro.nome.trim()) {
+    return `Informe o nome completo do membro ${indice + 1}.`;
+  }
+
+  const matricula = membro.matricula.trim();
+  if (
+    !matricula ||
+    matricula.length > 50 ||
+    !/^[\p{L}\p{N}][\p{L}\p{N}._/-]*$/u.test(matricula)
+  ) {
+    return `Informe uma matrícula válida para o membro ${indice + 1}.`;
+  }
+
+  const email = membro.email.trim();
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return `Informe um e-mail válido para o membro ${indice + 1}.`;
+  }
+
+  return null;
+}
+
+async function reservarVaga(
+  dataId: string,
+  disciplina: string,
+  turma: string,
+): Promise<boolean> {
+  for (let tentativa = 0; tentativa < 5; tentativa += 1) {
+    const { data: dataAtual, error: erroBusca } = await supabase
+      .from("datas_apresentacao")
+      .select("id, disciplina, turma, vagas_totais, vagas_ocupadas")
+      .eq("id", dataId)
+      .maybeSingle();
+
+    if (erroBusca) {
+      throw new Error(`Não foi possível verificar as vagas: ${erroBusca.message}`);
+    }
+
+    if (!dataAtual) {
+      throw new Error("A data selecionada não está mais disponível.");
+    }
+
+    if (dataAtual.disciplina !== disciplina || dataAtual.turma !== turma) {
+      throw new Error(
+        "A data selecionada não corresponde à disciplina e turma informadas.",
+      );
+    }
+
+    if (
+      typeof dataAtual.vagas_totais !== "number" ||
+      typeof dataAtual.vagas_ocupadas !== "number"
+    ) {
+      throw new Error("Os dados de vagas da data selecionada são inválidos.");
+    }
+
+    if (dataAtual.vagas_ocupadas >= dataAtual.vagas_totais) {
+      return false;
+    }
+
+    const { data: atualizada, error: erroAtualizacao } = await supabase
+      .from("datas_apresentacao")
+      .update({ vagas_ocupadas: dataAtual.vagas_ocupadas + 1 })
+      .eq("id", dataId)
+      .eq("vagas_ocupadas", dataAtual.vagas_ocupadas)
+      .eq("vagas_totais", dataAtual.vagas_totais)
+      .eq("disciplina", disciplina)
+      .eq("turma", turma)
+      .select("id")
+      .maybeSingle();
+
+    if (erroAtualizacao) {
+      throw new Error(`Não foi possível reservar a vaga: ${erroAtualizacao.message}`);
+    }
+
+    if (atualizada) {
+      return true;
+    }
+  }
+
+  throw new Error(
+    "Houve muitas inscrições simultâneas e não foi possível confirmar a vaga. Tente novamente.",
+  );
+}
+
+async function liberarVaga(dataId: string): Promise<void> {
+  for (let tentativa = 0; tentativa < 5; tentativa += 1) {
+    const { data: dataAtual, error: erroBusca } = await supabase
+      .from("datas_apresentacao")
+      .select("vagas_ocupadas")
+      .eq("id", dataId)
+      .maybeSingle();
+
+    if (erroBusca) {
+      throw new Error(`Não foi possível consultar a vaga para cancelamento: ${erroBusca.message}`);
+    }
+
+    if (!dataAtual || typeof dataAtual.vagas_ocupadas !== "number") {
+      throw new Error("A data reservada não foi encontrada para liberar a vaga.");
+    }
+
+    if (dataAtual.vagas_ocupadas === 0) {
+      return;
+    }
+
+    const { data: atualizada, error: erroAtualizacao } = await supabase
+      .from("datas_apresentacao")
+      .update({ vagas_ocupadas: dataAtual.vagas_ocupadas - 1 })
+      .eq("id", dataId)
+      .eq("vagas_ocupadas", dataAtual.vagas_ocupadas)
+      .select("id")
+      .maybeSingle();
+
+    if (erroAtualizacao) {
+      throw new Error(`Não foi possível liberar a vaga: ${erroAtualizacao.message}`);
+    }
+
+    if (atualizada) {
+      return;
+    }
+  }
+
+  throw new Error("Não foi possível liberar a vaga após várias tentativas.");
+}
 
 export default function Home() {
-  return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+  const [limites, setLimites] = useState<LimitesInscricao | null>(null);
+  const [datas, setDatas] = useState<DataApresentacao[]>([]);
+  const [grupo, setGrupo] = useState<GrupoFormulario>(formularioInicial);
+  const [membros, setMembros] = useState<MembroFormulario[]>([membroInicial()]);
+  const [carregandoInicial, setCarregandoInicial] = useState(true);
+  const [carregandoEnvio, setCarregandoEnvio] = useState(false);
+  const [erroInicial, setErroInicial] = useState("");
+  const [erroFormulario, setErroFormulario] = useState("");
+  const [sucesso, setSucesso] = useState(false);
+  const [atualizacao, setAtualizacao] = useState(0);
+
+  useEffect(() => {
+    let ativo = true;
+
+    async function carregarDados(): Promise<void> {
+      setCarregandoInicial(true);
+      setErroInicial("");
+
+      try {
+        const [configuracaoResult, datasResult] = await Promise.all([
+          supabase
+            .from("configuracoes")
+            .select(
+              "limite_alunos_min, limite_alunos_max, permitir_inscricoes",
+            )
+            .limit(1)
+            .maybeSingle(),
+          supabase
+            .from("datas_apresentacao")
+            .select(
+              "id, data_hora, disciplina, turma, vagas_totais, vagas_ocupadas",
+            )
+            .order("data_hora", { ascending: true }),
+        ]);
+
+        if (configuracaoResult.error) {
+          throw new Error(
+            `Não foi possível carregar as configurações: ${configuracaoResult.error.message}`,
+          );
+        }
+
+        if (datasResult.error) {
+          throw new Error(
+            `Não foi possível carregar as datas: ${datasResult.error.message}`,
+          );
+        }
+
+        if (!isLimitesInscricao(configuracaoResult.data)) {
+          throw new Error(
+            "As configurações de quantidade de alunos estão ausentes ou inválidas.",
+          );
+        }
+
+        const datasValidas = (datasResult.data ?? []).filter(
+          isDataApresentacao,
+        );
+
+        if (ativo) {
+          setLimites(configuracaoResult.data);
+          setMembros(
+            Array.from(
+              { length: configuracaoResult.data.limite_alunos_min },
+              membroInicial,
+            ),
+          );
+          setDatas(
+            datasValidas.filter(
+              (data) => data.vagas_ocupadas < data.vagas_totais,
+            ),
+          );
+        }
+      } catch (error: unknown) {
+        if (ativo) {
+          setErroInicial(obterMensagemErro(error));
+        }
+      } finally {
+        if (ativo) {
+          setCarregandoInicial(false);
+        }
+      }
+    }
+
+    void carregarDados();
+
+    return () => {
+      ativo = false;
+    };
+  }, [atualizacao]);
+
+  const adicionarMembro = useCallback(() => {
+    if (!limites || membros.length >= limites.limite_alunos_max) {
+      return;
+    }
+
+    setMembros((membrosAtuais) => [...membrosAtuais, membroInicial()]);
+  }, [limites, membros.length]);
+
+  const datasDisponiveis = datas.filter(
+    (data) =>
+      data.disciplina === grupo.disciplina &&
+      data.turma === grupo.turma &&
+      data.vagas_ocupadas < data.vagas_totais,
+  );
+
+  function atualizarMembro(
+    indice: number,
+    campo: keyof MembroFormulario,
+    valor: string,
+  ): void {
+    setMembros((membrosAtuais) =>
+      membrosAtuais.map((membro, indiceAtual) =>
+        indiceAtual === indice ? { ...membro, [campo]: valor } : membro,
+      ),
+    );
+  }
+
+  function removerMembro(indice: number): void {
+    if (!limites || membros.length <= limites.limite_alunos_min) {
+      return;
+    }
+
+    setMembros((membrosAtuais) =>
+      membrosAtuais.filter((_, indiceAtual) => indiceAtual !== indice),
+    );
+  }
+
+  async function enviarFormulario(
+    event: FormEvent<HTMLFormElement>,
+  ): Promise<void> {
+    event.preventDefault();
+    setErroFormulario("");
+
+    if (!limites?.permitir_inscricoes) {
+      setErroFormulario("As inscrições estão encerradas no momento.");
+      return;
+    }
+
+    if (
+      membros.length < limites.limite_alunos_min ||
+      membros.length > limites.limite_alunos_max
+    ) {
+      setErroFormulario(
+        `O grupo deve ter entre ${limites.limite_alunos_min} e ${limites.limite_alunos_max} membros.`,
+      );
+      return;
+    }
+
+    if (
+      !grupo.nome_grupo.trim() ||
+      !grupo.disciplina ||
+      !grupo.turma.trim() ||
+      !grupo.tema_projeto.trim() ||
+      !grupo.data_apresentacao_id
+    ) {
+      setErroFormulario("Preencha todos os campos obrigatórios do grupo.");
+      return;
+    }
+
+    for (const [indice, membro] of membros.entries()) {
+      const erro = validarMembro(membro, indice);
+      if (erro) {
+        setErroFormulario(erro);
+        return;
+      }
+    }
+
+    setCarregandoEnvio(true);
+    let vagaReservada = false;
+    let grupoId: string | null = null;
+
+    try {
+      vagaReservada = await reservarVaga(
+        grupo.data_apresentacao_id,
+        grupo.disciplina,
+        grupo.turma.trim(),
+      );
+      if (!vagaReservada) {
+        setErroFormulario(
+          "Esta data acabou de ficar sem vagas. Escolha outra data disponível.",
+        );
+        setAtualizacao((valor) => valor + 1);
+        return;
+      }
+
+      const novoGrupo: NovoGrupo = {
+        nome_grupo: grupo.nome_grupo.trim(),
+        disciplina: grupo.disciplina,
+        turma: grupo.turma.trim(),
+        tema_projeto: grupo.tema_projeto.trim(),
+        link_repositorio: null,
+        data_apresentacao_id: grupo.data_apresentacao_id,
+      };
+
+      const { data: grupoInserido, error: erroGrupo } = await supabase
+        .from("grupos")
+        .insert(novoGrupo)
+        .select("id")
+        .single();
+
+      if (erroGrupo) {
+        throw new Error(`Não foi possível cadastrar o grupo: ${erroGrupo.message}`);
+      }
+
+      if (!grupoInserido || typeof grupoInserido.id !== "string") {
+        throw new Error("O cadastro do grupo não retornou um identificador válido.");
+      }
+
+      grupoId = grupoInserido.id;
+      const novosAlunos: NovoAluno[] = membros.map((membro, indice) => ({
+        grupo_id: grupoInserido.id,
+        nome: membro.nome.trim(),
+        matricula: membro.matricula.trim(),
+        email: membro.email.trim() || null,
+        eh_lider: indice === 0,
+      }));
+
+      const { error: erroAlunos } = await supabase
+        .from("alunos")
+        .insert(novosAlunos);
+
+      if (erroAlunos) {
+        throw new Error(`Não foi possível cadastrar os membros: ${erroAlunos.message}`);
+      }
+
+      setSucesso(true);
+      setGrupo(formularioInicial);
+      setAtualizacao((valor) => valor + 1);
+    } catch (error: unknown) {
+      const mensagensRollback: string[] = [];
+
+      if (grupoId) {
+        const { error: erroExclusao } = await supabase
+          .from("grupos")
+          .delete()
+          .eq("id", grupoId);
+
+        if (erroExclusao) {
+          mensagensRollback.push(
+            `Também não foi possível remover o grupo parcialmente criado: ${erroExclusao.message}`,
+          );
+        }
+      }
+
+      if (vagaReservada && !grupoId) {
+        try {
+          await liberarVaga(grupo.data_apresentacao_id);
+        } catch (erroRollback: unknown) {
+          mensagensRollback.push(obterMensagemErro(erroRollback));
+        }
+      } else if (vagaReservada && grupoId && mensagensRollback.length === 0) {
+        try {
+          await liberarVaga(grupo.data_apresentacao_id);
+        } catch (erroRollback: unknown) {
+          mensagensRollback.push(obterMensagemErro(erroRollback));
+        }
+      }
+
+      const detalheRollback =
+        mensagensRollback.length > 0
+          ? ` ${mensagensRollback.join(" ")}`
+          : "";
+      setErroFormulario(`${obterMensagemErro(error)}${detalheRollback}`);
+    } finally {
+      setCarregandoEnvio(false);
+    }
+  }
+
+  if (carregandoInicial) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
+        <div className="flex items-center gap-3 text-slate-600" role="status">
+          <LoaderCircle className="h-5 w-5 animate-spin text-emerald-700" />
+          <span>Carregando informações da inscrição...</span>
         </div>
       </main>
-    </div>
+    );
+  }
+
+  if (erroInicial) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-slate-50 px-4 py-12">
+        <section className="w-full max-w-lg rounded-2xl border border-red-200 bg-white p-8 text-center shadow-sm">
+          <AlertCircle className="mx-auto h-10 w-10 text-red-600" />
+          <h1 className="mt-4 text-xl font-bold text-slate-900">
+            Não foi possível carregar a inscrição
+          </h1>
+          <p className="mt-2 text-sm leading-6 text-slate-600">{erroInicial}</p>
+          <button
+            className="mt-6 rounded-lg bg-emerald-700 px-5 py-3 text-sm font-semibold text-white transition hover:bg-emerald-800"
+            onClick={() => setAtualizacao((valor) => valor + 1)}
+            type="button"
+          >
+            Tentar novamente
+          </button>
+        </section>
+      </main>
+    );
+  }
+
+  if (!limites?.permitir_inscricoes) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-slate-50 px-4 py-12">
+        <section className="w-full max-w-xl rounded-2xl border border-amber-200 bg-white p-8 text-center shadow-sm sm:p-10">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-amber-100 text-amber-800">
+            <CalendarDays className="h-7 w-7" />
+          </div>
+          <h1 className="mt-5 text-2xl font-bold tracking-tight text-slate-900">
+            Inscrições encerradas
+          </h1>
+          <p className="mt-3 leading-7 text-slate-600">
+            As inscrições de grupos não estão abertas no momento. Consulte seu
+            professor para mais informações.
+          </p>
+        </section>
+      </main>
+    );
+  }
+
+  return (
+    <main className="min-h-screen bg-slate-50 px-4 py-10 sm:px-6 sm:py-14">
+      <div className="mx-auto max-w-3xl">
+        <header className="mb-8 text-center sm:mb-10">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-700 text-white shadow-sm">
+            <Users className="h-7 w-7" />
+          </div>
+          <p className="mt-5 text-sm font-semibold uppercase tracking-[0.18em] text-emerald-800">
+            GrupoHub
+          </p>
+          <h1 className="mt-2 text-3xl font-bold tracking-tight text-slate-950 sm:text-4xl">
+            Inscrição de grupo
+          </h1>
+          <p className="mx-auto mt-3 max-w-xl text-base leading-7 text-slate-600">
+            Preencha os dados do projeto e de cada integrante para reservar a
+            apresentação do seu grupo.
+          </p>
+        </header>
+
+        <form
+          className="space-y-6"
+          noValidate
+          onSubmit={(event) => void enviarFormulario(event)}
+        >
+          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-8">
+            <div className="mb-6 flex items-start gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-800">
+                <Users className="h-5 w-5" />
+              </div>
+              <div>
+                <h2 className="text-lg font-bold text-slate-900">
+                  Dados do grupo
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  Informe os dados principais do projeto.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid gap-5 sm:grid-cols-2">
+              <label className="space-y-2 sm:col-span-2">
+                <span className="text-sm font-semibold text-slate-700">
+                  Nome do grupo <span className="text-red-600">*</span>
+                </span>
+                <input
+                  autoComplete="organization"
+                  className="w-full rounded-lg border border-slate-300 px-3.5 py-3 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
+                  maxLength={100}
+                  onChange={(event) =>
+                    setGrupo({ ...grupo, nome_grupo: event.target.value })
+                  }
+                  placeholder="Ex.: Byte Builders"
+                  required
+                  value={grupo.nome_grupo}
+                />
+              </label>
+
+              <label className="space-y-2">
+                <span className="text-sm font-semibold text-slate-700">
+                  Disciplina <span className="text-red-600">*</span>
+                </span>
+                <select
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-3 text-slate-900 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
+                  onChange={(event) =>
+                    setGrupo({
+                      ...grupo,
+                      disciplina: event.target.value,
+                      data_apresentacao_id: "",
+                    })
+                  }
+                  required
+                  value={grupo.disciplina}
+                >
+                  <option value="">Selecione uma disciplina</option>
+                  {disciplinas.map((disciplina) => (
+                    <option key={disciplina} value={disciplina}>
+                      {disciplina}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="space-y-2">
+                <span className="text-sm font-semibold text-slate-700">
+                  Turma <span className="text-red-600">*</span>
+                </span>
+                <input
+                  autoComplete="off"
+                  className="w-full rounded-lg border border-slate-300 px-3.5 py-3 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
+                  maxLength={50}
+                  onChange={(event) =>
+                    setGrupo({
+                      ...grupo,
+                      turma: event.target.value,
+                      data_apresentacao_id: "",
+                    })
+                  }
+                  placeholder="Ex.: 3º semestre - A"
+                  required
+                  value={grupo.turma}
+                />
+              </label>
+
+              <label className="space-y-2 sm:col-span-2">
+                <span className="text-sm font-semibold text-slate-700">
+                  Tema do projeto <span className="text-red-600">*</span>
+                </span>
+                <textarea
+                  className="min-h-28 w-full resize-y rounded-lg border border-slate-300 px-3.5 py-3 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
+                  maxLength={500}
+                  onChange={(event) =>
+                    setGrupo({ ...grupo, tema_projeto: event.target.value })
+                  }
+                  placeholder="Descreva brevemente o tema do projeto"
+                  required
+                  value={grupo.tema_projeto}
+                />
+              </label>
+
+              <label className="space-y-2 sm:col-span-2">
+                <span className="text-sm font-semibold text-slate-700">
+                  Data e horário da apresentação{" "}
+                  <span className="text-red-600">*</span>
+                </span>
+                <select
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-3 text-slate-900 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15 disabled:cursor-not-allowed disabled:bg-slate-100"
+                  disabled={!grupo.disciplina || !grupo.turma || datasDisponiveis.length === 0}
+                  onChange={(event) =>
+                    setGrupo({
+                      ...grupo,
+                      data_apresentacao_id: event.target.value,
+                    })
+                  }
+                  required
+                  value={grupo.data_apresentacao_id}
+                >
+                  <option value="">
+                    {!grupo.disciplina || !grupo.turma
+                      ? "Selecione a disciplina e a turma primeiro"
+                      : datasDisponiveis.length > 0
+                        ? "Selecione uma data disponível"
+                        : "Não há datas disponíveis para esta disciplina e turma"}
+                  </option>
+                  {datasDisponiveis.map((data) => (
+                    <option key={data.id} value={data.id}>
+                      {formatarData(data.data_hora)} (
+                      {data.vagas_totais - data.vagas_ocupadas}{" "}
+                      {data.vagas_totais - data.vagas_ocupadas === 1
+                        ? "vaga restante"
+                        : "vagas restantes"}
+                      )
+                    </option>
+                  ))}
+                </select>
+                {grupo.disciplina &&
+                  grupo.turma &&
+                  datasDisponiveis.length === 0 && (
+                  <span className="block text-sm text-amber-700">
+                    Não há horários com vagas para a disciplina e turma
+                    selecionadas. Tente novamente mais tarde.
+                  </span>
+                )}
+              </label>
+            </div>
+          </section>
+
+          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-8">
+            <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+              <div className="flex items-start gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-800">
+                  <Users className="h-5 w-5" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-bold text-slate-900">
+                    Integrantes
+                  </h2>
+                  <p className="mt-1 text-sm text-slate-500">
+                    De {limites.limite_alunos_min} a {limites.limite_alunos_max}{" "}
+                    integrantes. O primeiro será o líder.
+                  </p>
+                </div>
+              </div>
+              <button
+                className="inline-flex items-center justify-center gap-2 self-start rounded-lg border border-emerald-700 px-4 py-2.5 text-sm font-semibold text-emerald-800 transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:border-slate-300 disabled:text-slate-400 disabled:hover:bg-white"
+                disabled={membros.length >= limites.limite_alunos_max}
+                onClick={adicionarMembro}
+                type="button"
+              >
+                <Plus className="h-4 w-4" />
+                Adicionar membro
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              {membros.map((membro, indice) => (
+                <fieldset
+                  className="rounded-xl border border-slate-200 bg-slate-50/70 p-4 sm:p-5"
+                  key={indice}
+                >
+                  <legend className="sr-only">
+                    {indice === 0 ? "Líder do grupo" : `Membro ${indice + 1}`}
+                  </legend>
+                  <div className="mb-4 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <span className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-100 text-xs font-bold text-emerald-900">
+                        {indice + 1}
+                      </span>
+                      <h3 className="text-sm font-bold text-slate-800">
+                        {indice === 0 ? "Líder do grupo" : `Membro ${indice + 1}`}
+                      </h3>
+                    </div>
+                    {indice > 0 && (
+                      <button
+                        aria-label={`Remover membro ${indice + 1}`}
+                        className="inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm font-medium text-red-700 transition hover:bg-red-50"
+                        onClick={() => removerMembro(indice)}
+                        type="button"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                        <span className="sr-only sm:not-sr-only">Remover</span>
+                      </button>
+                    )}
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <label className="space-y-2 sm:col-span-2">
+                      <span className="text-sm font-semibold text-slate-700">
+                        Nome completo <span className="text-red-600">*</span>
+                      </span>
+                      <input
+                        autoComplete="name"
+                        className="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-3 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
+                        maxLength={150}
+                        onChange={(event) =>
+                          atualizarMembro(indice, "nome", event.target.value)
+                        }
+                        placeholder="Nome e sobrenome"
+                        required
+                        value={membro.nome}
+                      />
+                    </label>
+                    <label className="space-y-2">
+                      <span className="text-sm font-semibold text-slate-700">
+                        Matrícula <span className="text-red-600">*</span>
+                      </span>
+                      <input
+                        autoComplete="off"
+                        className="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-3 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
+                        maxLength={50}
+                        onChange={(event) =>
+                          atualizarMembro(
+                            indice,
+                            "matricula",
+                            event.target.value,
+                          )
+                        }
+                        placeholder="Número de matrícula"
+                        required
+                        value={membro.matricula}
+                      />
+                    </label>
+                    <label className="space-y-2">
+                      <span className="text-sm font-semibold text-slate-700">
+                        E-mail <span className="font-normal text-slate-500">(opcional)</span>
+                      </span>
+                      <input
+                        autoComplete="email"
+                        className="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-3 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
+                        maxLength={254}
+                        onChange={(event) =>
+                          atualizarMembro(indice, "email", event.target.value)
+                        }
+                        placeholder="nome@exemplo.com"
+                        type="email"
+                        value={membro.email}
+                      />
+                    </label>
+                  </div>
+                </fieldset>
+              ))}
+            </div>
+          </section>
+
+          {erroFormulario && (
+            <div
+              className="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3.5 text-sm text-red-800"
+              role="alert"
+            >
+              <AlertCircle className="mt-0.5 h-5 w-5 shrink-0" />
+              <p>{erroFormulario}</p>
+            </div>
+          )}
+
+          <div className="flex flex-col-reverse items-stretch justify-between gap-3 sm:flex-row sm:items-center">
+            <p className="text-center text-xs text-slate-500 sm:text-left">
+              <span className="text-red-600">*</span> Campos obrigatórios
+            </p>
+            <button
+              className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-emerald-700 px-6 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-emerald-800 focus:outline-none focus:ring-4 focus:ring-emerald-700/20 disabled:cursor-not-allowed disabled:bg-slate-400"
+              disabled={
+                carregandoEnvio ||
+                datasDisponiveis.length === 0 ||
+                !grupo.data_apresentacao_id
+              }
+              type="submit"
+            >
+              {carregandoEnvio ? (
+                <>
+                  <LoaderCircle className="h-4 w-4 animate-spin" />
+                  Enviando inscrição...
+                </>
+              ) : (
+                <>
+                  <Send className="h-4 w-4" />
+                  Confirmar inscrição
+                </>
+              )}
+            </button>
+          </div>
+        </form>
+      </div>
+
+      {sucesso && (
+        <div
+          aria-labelledby="titulo-sucesso"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4"
+          role="dialog"
+        >
+          <section className="relative w-full max-w-md rounded-2xl bg-white p-7 text-center shadow-xl sm:p-9">
+            <button
+              aria-label="Fechar confirmação"
+              className="absolute right-4 top-4 rounded-lg p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800"
+              onClick={() => setSucesso(false)}
+              type="button"
+            >
+              <X className="h-5 w-5" />
+            </button>
+            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
+              <CheckCircle2 className="h-9 w-9" />
+            </div>
+            <h2
+              className="mt-5 text-2xl font-bold text-slate-950"
+              id="titulo-sucesso"
+            >
+              Inscrição confirmada!
+            </h2>
+            <p className="mt-3 leading-7 text-slate-600">
+              O grupo e seus integrantes foram cadastrados. A vaga para a
+              apresentação foi reservada com sucesso.
+            </p>
+            <button
+              className="mt-7 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-700 px-5 py-3 font-semibold text-white transition hover:bg-emerald-800"
+              onClick={() => setSucesso(false)}
+              type="button"
+            >
+              <Mail className="h-4 w-4" />
+              Concluir
+            </button>
+          </section>
+        </div>
+      )}
+    </main>
   );
 }
