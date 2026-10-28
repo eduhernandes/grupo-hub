@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 import {
   AlertCircle,
   CalendarDays,
@@ -29,9 +35,11 @@ type LimitesInscricao = Pick<
 >;
 
 interface MembroFormulario {
+  id: string;
   nome: string;
   matricula: string;
   email: string;
+  nomeEncontradoNaTurmaId: string | null;
 }
 
 interface GrupoFormulario {
@@ -49,12 +57,6 @@ const formularioInicial: GrupoFormulario = {
   tema_projeto: "",
   data_apresentacao_id: "",
 };
-
-const membroInicial = (): MembroFormulario => ({
-  nome: "",
-  matricula: "",
-  email: "",
-});
 
 function isLimitesInscricao(value: unknown): value is LimitesInscricao {
   if (typeof value !== "object" || value === null) {
@@ -169,6 +171,16 @@ function validarMembro(
   return null;
 }
 
+function membroVazio(id: string): MembroFormulario {
+  return {
+    id,
+    nome: "",
+    matricula: "",
+    email: "",
+    nomeEncontradoNaTurmaId: null,
+  };
+}
+
 async function reservarVaga(
   dataId: string,
   turmaId: string,
@@ -270,12 +282,24 @@ async function liberarVaga(dataId: string): Promise<void> {
 }
 
 export default function Home() {
+  const proximoMembroId = useRef(0);
+  const criarMembro = useCallback(
+    (): MembroFormulario =>
+      membroVazio(`membro-${proximoMembroId.current++}`),
+    [],
+  );
   const [limites, setLimites] = useState<LimitesInscricao | null>(null);
   const [datas, setDatas] = useState<DataApresentacao[]>([]);
   const [disciplinas, setDisciplinas] = useState<Disciplina[]>([]);
   const [turmas, setTurmas] = useState<Turma[]>([]);
   const [grupo, setGrupo] = useState<GrupoFormulario>(formularioInicial);
-  const [membros, setMembros] = useState<MembroFormulario[]>([membroInicial()]);
+  const turmaIdAtualRef = useRef("");
+  const [membros, setMembros] = useState<MembroFormulario[]>([
+    membroVazio("membro-inicial"),
+  ]);
+  const [consultandoMatriculas, setConsultandoMatriculas] = useState<
+    Set<string>
+  >(() => new Set());
   const [carregandoInicial, setCarregandoInicial] = useState(true);
   const [carregandoEnvio, setCarregandoEnvio] = useState(false);
   const [erroInicial, setErroInicial] = useState("");
@@ -363,7 +387,7 @@ export default function Home() {
           setMembros(
             Array.from(
               { length: configuracaoResult.data.limite_alunos_min },
-              membroInicial,
+              criarMembro,
             ),
           );
           setDatas(
@@ -388,15 +412,15 @@ export default function Home() {
     return () => {
       ativo = false;
     };
-  }, [atualizacao]);
+  }, [atualizacao, criarMembro]);
 
   const adicionarMembro = useCallback(() => {
     if (!limites || membros.length >= limites.limite_alunos_max) {
       return;
     }
 
-    setMembros((membrosAtuais) => [...membrosAtuais, membroInicial()]);
-  }, [limites, membros.length]);
+    setMembros((membrosAtuais) => [...membrosAtuais, criarMembro()]);
+  }, [criarMembro, limites, membros.length]);
 
   const datasDisponiveis = datas.filter(
     (data) =>
@@ -415,9 +439,87 @@ export default function Home() {
   ): void {
     setMembros((membrosAtuais) =>
       membrosAtuais.map((membro, indiceAtual) =>
-        indiceAtual === indice ? { ...membro, [campo]: valor } : membro,
+        indiceAtual === indice
+          ? campo === "matricula"
+            ? {
+                ...membro,
+                matricula: valor,
+                nome: "",
+                nomeEncontradoNaTurmaId: null,
+              }
+            : { ...membro, [campo]: valor }
+          : membro,
       ),
     );
+  }
+
+  async function buscarAlunoPermitido(indice: number): Promise<void> {
+    const membro = membros[indice];
+    const matricula = membro?.matricula.trim();
+    const turmaId = grupo.turma_id;
+
+    if (!membro || !matricula) {
+      return;
+    }
+
+    if (!turmaId) {
+      setErroFormulario(
+        "Selecione a turma antes de consultar a matrícula do aluno.",
+      );
+      return;
+    }
+
+    setErroFormulario("");
+    setConsultandoMatriculas((atuais) => new Set(atuais).add(membro.id));
+    try {
+      const { data, error } = await supabase
+        .from("alunos_permitidos")
+        .select("nome")
+        .eq("turma_id", turmaId)
+        .eq("matricula", matricula)
+        .maybeSingle();
+
+      if (error) {
+        throw new Error(
+          `Não foi possível consultar a matrícula: ${error.message}`,
+        );
+      }
+
+      setMembros((atuais) =>
+        atuais.map((aluno) => {
+          if (
+            aluno.id !== membro.id ||
+            aluno.matricula.trim() !== matricula ||
+            turmaIdAtualRef.current !== turmaId
+          ) {
+            return aluno;
+          }
+
+          if (data && typeof data.nome === "string") {
+            return {
+              ...aluno,
+              nome: data.nome,
+              nomeEncontradoNaTurmaId: turmaId,
+            };
+          }
+
+          return {
+            ...aluno,
+            nome:
+              aluno.nomeEncontradoNaTurmaId === turmaId ? "" : aluno.nome,
+            nomeEncontradoNaTurmaId: null,
+          };
+        }),
+      );
+    } catch (error: unknown) {
+      setErroFormulario(obterMensagemErro(error));
+    } finally {
+      setConsultandoMatriculas((atuais) => {
+        const proximos = new Set(atuais);
+        proximos.delete(membro.id);
+        return proximos;
+      });
+    }
   }
 
   function removerMembro(indice: number): void {
@@ -708,14 +810,26 @@ export default function Home() {
                 </span>
                 <select
                   className="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-3 text-slate-900 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
-                  onChange={(event) =>
+                  onChange={(event) => {
+                    turmaIdAtualRef.current = "";
+                    setMembros((atuais) =>
+                      atuais.map((membro) =>
+                        membro.nomeEncontradoNaTurmaId
+                          ? {
+                              ...membro,
+                              nome: "",
+                              nomeEncontradoNaTurmaId: null,
+                            }
+                          : membro,
+                      ),
+                    );
                     setGrupo({
                       ...grupo,
                       disciplina_id: event.target.value,
                       turma_id: "",
                       data_apresentacao_id: "",
-                    })
-                  }
+                    });
+                  }}
                   required
                   value={grupo.disciplina_id}
                 >
@@ -735,13 +849,25 @@ export default function Home() {
                 <select
                   className="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-3 text-slate-900 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15 disabled:cursor-not-allowed disabled:bg-slate-100"
                   disabled={!grupo.disciplina_id}
-                  onChange={(event) =>
+                  onChange={(event) => {
+                    turmaIdAtualRef.current = event.target.value;
+                    setMembros((atuais) =>
+                      atuais.map((membro) =>
+                        membro.nomeEncontradoNaTurmaId
+                          ? {
+                              ...membro,
+                              nome: "",
+                              nomeEncontradoNaTurmaId: null,
+                            }
+                          : membro,
+                      ),
+                    );
                     setGrupo({
                       ...grupo,
                       turma_id: event.target.value,
                       data_apresentacao_id: "",
-                    })
-                  }
+                    });
+                  }}
                   required
                   value={grupo.turma_id}
                 >
@@ -852,7 +978,7 @@ export default function Home() {
               {membros.map((membro, indice) => (
                 <fieldset
                   className="rounded-xl border border-slate-200 bg-slate-50/70 p-4 sm:p-5"
-                  key={indice}
+                  key={membro.id}
                 >
                   <legend className="sr-only">
                     {indice === 0 ? "Líder do grupo" : `Membro ${indice + 1}`}
@@ -879,22 +1005,6 @@ export default function Home() {
                     )}
                   </div>
                   <div className="grid gap-4 sm:grid-cols-2">
-                    <label className="space-y-2 sm:col-span-2">
-                      <span className="text-sm font-semibold text-slate-700">
-                        Nome completo <span className="text-red-600">*</span>
-                      </span>
-                      <input
-                        autoComplete="name"
-                        className="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-3 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
-                        maxLength={150}
-                        onChange={(event) =>
-                          atualizarMembro(indice, "nome", event.target.value)
-                        }
-                        placeholder="Nome e sobrenome"
-                        required
-                        value={membro.nome}
-                      />
-                    </label>
                     <label className="space-y-2">
                       <span className="text-sm font-semibold text-slate-700">
                         Matrícula <span className="text-red-600">*</span>
@@ -903,6 +1013,7 @@ export default function Home() {
                         autoComplete="off"
                         className="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-3 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
                         maxLength={50}
+                        onBlur={() => void buscarAlunoPermitido(indice)}
                         onChange={(event) =>
                           atualizarMembro(
                             indice,
@@ -914,6 +1025,39 @@ export default function Home() {
                         required
                         value={membro.matricula}
                       />
+                      {consultandoMatriculas.has(membro.id) && (
+                        <span className="block text-xs text-slate-500" role="status">
+                          Consultando matrícula...
+                        </span>
+                      )}
+                    </label>
+                    <label className="space-y-2">
+                      <span className="text-sm font-semibold text-slate-700">
+                        Nome completo <span className="text-red-600">*</span>
+                      </span>
+                      <input
+                        autoComplete="name"
+                        className={`w-full rounded-lg border px-3.5 py-3 outline-none transition placeholder:text-slate-400 focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15 ${
+                          membro.nomeEncontradoNaTurmaId === grupo.turma_id
+                            ? "border-emerald-200 bg-emerald-50 text-slate-700"
+                            : "border-slate-300 bg-white text-slate-900"
+                        }`}
+                        maxLength={150}
+                        onChange={(event) =>
+                          atualizarMembro(indice, "nome", event.target.value)
+                        }
+                        placeholder="Nome e sobrenome"
+                        readOnly={
+                          membro.nomeEncontradoNaTurmaId === grupo.turma_id
+                        }
+                        required
+                        value={membro.nome}
+                      />
+                      {membro.nomeEncontradoNaTurmaId === grupo.turma_id && (
+                        <span className="block text-xs text-emerald-800">
+                          Nome preenchido a partir da lista da turma.
+                        </span>
+                      )}
                     </label>
                     <label className="space-y-2">
                       <span className="text-sm font-semibold text-slate-700">

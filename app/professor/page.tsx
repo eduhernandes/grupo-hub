@@ -15,6 +15,7 @@ import {
   Save,
   Settings2,
   Trash2,
+  Upload,
   Users,
   X,
 } from "lucide-react";
@@ -58,6 +59,12 @@ interface DisciplinaForm {
 interface TurmaForm {
   disciplina_id: string;
   nome_turma: string;
+}
+
+interface AlunoPermitidoImportacao {
+  turma_id: string;
+  matricula: string;
+  nome: string;
 }
 
 interface AlunoForm {
@@ -198,6 +205,125 @@ function escaparCsv(valor: string | number): string {
   return `"${texto.replaceAll('"', '""')}"`;
 }
 
+function parsearCsvAlunos(conteudo: string): AlunoPermitidoImportacao[] {
+  const linhas: string[][] = [];
+  let linha: string[] = [];
+  let campo = "";
+  let entreAspas = false;
+
+  for (let indice = 0; indice < conteudo.length; indice += 1) {
+    const caractere = conteudo[indice];
+
+    if (entreAspas) {
+      if (caractere === '"' && conteudo[indice + 1] === '"') {
+        campo += '"';
+        indice += 1;
+      } else if (caractere === '"') {
+        entreAspas = false;
+      } else {
+        campo += caractere;
+      }
+      continue;
+    }
+
+    if (caractere === '"') {
+      entreAspas = true;
+    } else if (caractere === ",") {
+      linha.push(campo);
+      campo = "";
+    } else if (caractere === "\n" || caractere === "\r") {
+      linha.push(campo);
+      linhas.push(linha);
+      linha = [];
+      campo = "";
+      if (caractere === "\r" && conteudo[indice + 1] === "\n") {
+        indice += 1;
+      }
+    } else {
+      campo += caractere;
+    }
+  }
+
+  if (entreAspas) {
+    throw new Error("O CSV contém um campo entre aspas que não foi fechado.");
+  }
+
+  if (campo.length > 0 || linha.length > 0) {
+    linha.push(campo);
+    linhas.push(linha);
+  }
+
+  const linhasComDados = linhas
+    .map((campos) =>
+      campos.map((valor, indice) =>
+        indice === 0 ? valor.replace(/^\uFEFF/, "").trim() : valor.trim(),
+      ),
+    )
+    .filter((campos) => campos.some((valor) => valor.length > 0));
+  const primeiraLinha = linhasComDados[0];
+  const normalizarCabecalho = (valor: string | undefined) =>
+    valor
+      ?.normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLocaleLowerCase("pt-BR");
+  const inicio =
+    normalizarCabecalho(primeiraLinha?.[0]) === "matricula" &&
+    normalizarCabecalho(primeiraLinha?.[1]) === "nome"
+      ? 1
+      : 0;
+  const registros = new Map<string, AlunoPermitidoImportacao>();
+
+  for (let indice = inicio; indice < linhasComDados.length; indice += 1) {
+    const campos = linhasComDados[indice];
+    if (campos.length !== 2 || !campos[0] || !campos[1]) {
+      throw new Error(
+        `A linha ${indice + 1} deve conter exatamente matrícula e nome.`,
+      );
+    }
+
+    registros.set(campos[0], {
+      turma_id: "",
+      matricula: campos[0],
+      nome: campos[1],
+    });
+  }
+
+  if (registros.size === 0) {
+    throw new Error("O CSV não contém alunos para importar.");
+  }
+
+  return [...registros.values()];
+}
+
+function lerArquivoCsv(arquivo: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      if (typeof reader.result !== "string") {
+        reject(new Error("Não foi possível ler o conteúdo do arquivo CSV."));
+        return;
+      }
+
+      resolve(reader.result);
+    };
+
+    reader.onerror = () => {
+      reject(
+        new Error(
+          reader.error?.message ?? "Ocorreu um erro ao ler o arquivo CSV.",
+        ),
+      );
+    };
+
+    reader.onabort = () => {
+      reject(new Error("A leitura do arquivo CSV foi cancelada."));
+    };
+
+    reader.readAsText(arquivo, "UTF-8");
+  });
+}
+
 async function ajustarVaga(dataId: string, delta: 1 | -1): Promise<void> {
   for (let tentativa = 0; tentativa < 5; tentativa += 1) {
     const { data: dataAtual, error: erroBusca } = await supabase
@@ -273,6 +399,9 @@ export default function ProfessorPage() {
     disciplina_id: "",
     nome_turma: "",
   });
+  const [turmaImportacaoId, setTurmaImportacaoId] = useState("");
+  const [arquivoImportacao, setArquivoImportacao] = useState<File | null>(null);
+  const [chaveInputArquivo, setChaveInputArquivo] = useState(0);
   const [grupoEmEdicao, setGrupoEmEdicao] = useState<Grupo | null>(null);
   const [grupoForm, setGrupoForm] = useState<GrupoForm | null>(null);
   const [alunosForm, setAlunosForm] = useState<AlunoForm[]>([]);
@@ -282,6 +411,7 @@ export default function ProfessorPage() {
   const [atualizandoData, setAtualizandoData] = useState(false);
   const [salvandoDisciplina, setSalvandoDisciplina] = useState(false);
   const [salvandoTurma, setSalvandoTurma] = useState(false);
+  const [importandoAlunos, setImportandoAlunos] = useState(false);
   const [salvandoGrupo, setSalvandoGrupo] = useState(false);
   const [removendoData, setRemovendoData] = useState<string | null>(null);
   const [excluindoGrupo, setExcluindoGrupo] = useState<string | null>(null);
@@ -498,6 +628,63 @@ export default function ProfessorPage() {
       setErro(mensagemErro(error));
     } finally {
       setSalvandoTurma(false);
+    }
+  }
+
+  async function importarAlunosPermitidos(
+    event: FormEvent<HTMLFormElement>,
+  ): Promise<void> {
+    event.preventDefault();
+    setErro("");
+    setAviso("");
+
+    if (!turmaImportacaoId) {
+      setErro("Selecione uma turma para importar os alunos.");
+      return;
+    }
+
+    if (!arquivoImportacao) {
+      setErro("Selecione uma turma e um arquivo CSV.");
+      return;
+    }
+
+    if (!turmasPorId.has(turmaImportacaoId)) {
+      setErro("A turma selecionada não foi encontrada. Atualize o painel.");
+      return;
+    }
+
+    if (!arquivoImportacao.name.toLocaleLowerCase("pt-BR").endsWith(".csv")) {
+      setErro("O arquivo selecionado deve ter a extensão .csv.");
+      return;
+    }
+
+    setImportandoAlunos(true);
+    try {
+      const conteudo = await lerArquivoCsv(arquivoImportacao);
+      const registros = parsearCsvAlunos(conteudo).map((registro) => ({
+        ...registro,
+        turma_id: turmaImportacaoId,
+      }));
+
+      const { error: importError } = await supabase
+        .from("alunos_permitidos")
+        .upsert(registros, { onConflict: "turma_id,matricula" });
+
+      if (importError) {
+        throw new Error(
+          `Não foi possível importar a lista de alunos: ${importError.message}`,
+        );
+      }
+
+      setAviso(
+        `${registros.length} ${registros.length === 1 ? "aluno importado" : "alunos importados"} para a turma ${turmasPorId.get(turmaImportacaoId)?.nome_turma ?? ""}.`,
+      );
+      setArquivoImportacao(null);
+      setChaveInputArquivo((valor) => valor + 1);
+    } catch (error: unknown) {
+      setErro(mensagemErro(error));
+    } finally {
+      setImportandoAlunos(false);
     }
   }
 
@@ -1531,6 +1718,84 @@ export default function ProfessorPage() {
                   );
                 })}
               </div>
+            </section>
+
+            <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-7">
+              <div className="mb-5 flex items-start gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-800">
+                  <Upload className="h-5 w-5" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-bold text-slate-900">
+                    Importar lista de alunos por turma
+                  </h2>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Envie um CSV com as colunas{" "}
+                    <code className="rounded bg-slate-100 px-1.5 py-0.5">
+                      matricula,nome
+                    </code>
+                    . O cabeçalho é opcional.
+                  </p>
+                </div>
+              </div>
+              <form
+                className="grid gap-4 lg:grid-cols-[1fr_1.4fr_auto] lg:items-end"
+                onSubmit={(event) => void importarAlunosPermitidos(event)}
+              >
+                <label className="space-y-2">
+                  <span className="text-sm font-semibold text-slate-700">
+                    Turma
+                  </span>
+                  <select
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-3 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
+                    onChange={(event) =>
+                      setTurmaImportacaoId(event.target.value)
+                    }
+                    value={turmaImportacaoId}
+                  >
+                    <option value="">Selecione uma turma</option>
+                    {turmas.map((turma) => (
+                      <option key={turma.id} value={turma.id}>
+                        {disciplinasPorId.get(turma.disciplina_id)?.nome ??
+                          "Disciplina"}{" "}
+                        · {turma.nome_turma}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="space-y-2">
+                  <span className="text-sm font-semibold text-slate-700">
+                    Arquivo CSV
+                  </span>
+                  <input
+                    accept=".csv,text/csv"
+                    className="block w-full rounded-lg border border-slate-300 bg-white text-sm text-slate-700 file:mr-4 file:border-0 file:bg-emerald-50 file:px-4 file:py-3 file:font-semibold file:text-emerald-800 hover:file:bg-emerald-100"
+                    key={chaveInputArquivo}
+                    onChange={(event) =>
+                      setArquivoImportacao(event.target.files?.[0] ?? null)
+                    }
+                    type="file"
+                  />
+                </label>
+                <button
+                  className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-700 px-5 py-3 text-sm font-bold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-slate-400"
+                  disabled={
+                    importandoAlunos
+                  }
+                  type="submit"
+                >
+                  {importandoAlunos ? (
+                    <LoaderCircle className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Upload className="h-4 w-4" />
+                  )}
+                  {importandoAlunos ? "Importando..." : "Importar alunos"}
+                </button>
+              </form>
+              <p className="mt-3 text-xs text-slate-500">
+                Exemplo: <code>20231012,João da Silva</code>. Matrículas
+                repetidas na mesma turma serão atualizadas.
+              </p>
             </section>
 
             <section className="mt-6 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
