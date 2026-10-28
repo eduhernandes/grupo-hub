@@ -23,8 +23,12 @@ import type {
   Aluno,
   Configuracao,
   DataApresentacao,
+  Disciplina,
   Grupo,
   NovaData,
+  NovaDisciplina,
+  NovaTurma,
+  Turma,
 } from "@/types/database";
 
 type ConfiguracaoForm = Pick<
@@ -37,9 +41,23 @@ type ConfiguracaoForm = Pick<
 
 interface DataForm {
   data_hora: string;
-  disciplina: string;
-  turma: string;
+  turma_id: string;
   vagas_totais: string;
+}
+
+interface DataEdicaoForm {
+  id: string;
+  data_hora: string;
+  vagas_totais: string;
+}
+
+interface DisciplinaForm {
+  nome: string;
+}
+
+interface TurmaForm {
+  disciplina_id: string;
+  nome_turma: string;
 }
 
 interface AlunoForm {
@@ -52,6 +70,7 @@ interface AlunoForm {
 
 interface GrupoForm {
   nome_grupo: string;
+  turma_id: string;
   tema_projeto: string;
   link_repositorio: string;
   data_apresentacao_id: string;
@@ -59,8 +78,7 @@ interface GrupoForm {
 
 const dataFormInicial: DataForm = {
   data_hora: "",
-  disciplina: "",
-  turma: "",
+  turma_id: "",
   vagas_totais: "",
 };
 
@@ -82,9 +100,8 @@ function isDataApresentacao(value: unknown): value is DataApresentacao {
   return (
     isObject(value) &&
     typeof value.id === "string" &&
+    typeof value.turma_id === "string" &&
     typeof value.data_hora === "string" &&
-    typeof value.disciplina === "string" &&
-    typeof value.turma === "string" &&
     typeof value.vagas_totais === "number" &&
     typeof value.vagas_ocupadas === "number"
   );
@@ -95,14 +112,29 @@ function isGrupo(value: unknown): value is Grupo {
     isObject(value) &&
     typeof value.id === "string" &&
     typeof value.nome_grupo === "string" &&
-    typeof value.disciplina === "string" &&
-    typeof value.turma === "string" &&
+    typeof value.turma_id === "string" &&
     typeof value.tema_projeto === "string" &&
     (typeof value.link_repositorio === "string" ||
       value.link_repositorio === null) &&
     (typeof value.data_apresentacao_id === "string" ||
-      value.data_apresentacao_id === null) &&
-    typeof value.criado_em === "string"
+      value.data_apresentacao_id === null)
+  );
+}
+
+function isDisciplina(value: unknown): value is Disciplina {
+  return (
+    isObject(value) &&
+    typeof value.id === "string" &&
+    typeof value.nome === "string"
+  );
+}
+
+function isTurma(value: unknown): value is Turma {
+  return (
+    isObject(value) &&
+    typeof value.id === "string" &&
+    typeof value.disciplina_id === "string" &&
+    typeof value.nome_turma === "string"
   );
 }
 
@@ -143,6 +175,16 @@ function formatarData(dataHora: string): string {
     timeStyle: "short",
     timeZone: "America/Sao_Paulo",
   }).format(date);
+}
+
+function formatarDataParaInput(dataHora: string): string {
+  const date = new Date(dataHora);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  const pad = (valor: number) => String(valor).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 function mensagemErro(error: unknown): string {
@@ -216,15 +258,30 @@ export default function ProfessorPage() {
     null,
   );
   const [datas, setDatas] = useState<DataApresentacao[]>([]);
+  const [disciplinas, setDisciplinas] = useState<Disciplina[]>([]);
+  const [turmas, setTurmas] = useState<Turma[]>([]);
   const [grupos, setGrupos] = useState<Grupo[]>([]);
   const [alunos, setAlunos] = useState<Aluno[]>([]);
   const [dataForm, setDataForm] = useState<DataForm>(dataFormInicial);
+  const [dataEmEdicao, setDataEmEdicao] = useState<DataEdicaoForm | null>(
+    null,
+  );
+  const [disciplinaForm, setDisciplinaForm] = useState<DisciplinaForm>({
+    nome: "",
+  });
+  const [turmaForm, setTurmaForm] = useState<TurmaForm>({
+    disciplina_id: "",
+    nome_turma: "",
+  });
   const [grupoEmEdicao, setGrupoEmEdicao] = useState<Grupo | null>(null);
   const [grupoForm, setGrupoForm] = useState<GrupoForm | null>(null);
   const [alunosForm, setAlunosForm] = useState<AlunoForm[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [salvandoConfig, setSalvandoConfig] = useState(false);
   const [salvandoData, setSalvandoData] = useState(false);
+  const [atualizandoData, setAtualizandoData] = useState(false);
+  const [salvandoDisciplina, setSalvandoDisciplina] = useState(false);
+  const [salvandoTurma, setSalvandoTurma] = useState(false);
   const [salvandoGrupo, setSalvandoGrupo] = useState(false);
   const [removendoData, setRemovendoData] = useState<string | null>(null);
   const [excluindoGrupo, setExcluindoGrupo] = useState<string | null>(null);
@@ -243,7 +300,14 @@ export default function ProfessorPage() {
 
   const carregarPainel = useCallback(async (): Promise<void> => {
     try {
-      const [configResult, datasResult, gruposResult, alunosResult] =
+      const [
+        configResult,
+        disciplinasResult,
+        turmasResult,
+        datasResult,
+        gruposResult,
+        alunosResult,
+      ] =
         await Promise.all([
           supabase
             .from("configuracoes")
@@ -253,17 +317,25 @@ export default function ProfessorPage() {
             .limit(1)
             .maybeSingle(),
           supabase
+            .from("disciplinas")
+            .select("id, nome")
+            .order("nome", { ascending: true }),
+          supabase
+            .from("turmas")
+            .select("id, disciplina_id, nome_turma")
+            .order("nome_turma", { ascending: true }),
+          supabase
             .from("datas_apresentacao")
             .select(
-              "id, data_hora, disciplina, turma, vagas_totais, vagas_ocupadas",
+              "id, turma_id, data_hora, vagas_totais, vagas_ocupadas",
             )
             .order("data_hora", { ascending: true }),
           supabase
             .from("grupos")
             .select(
-              "id, nome_grupo, disciplina, turma, tema_projeto, link_repositorio, data_apresentacao_id, criado_em",
+              "id, nome_grupo, turma_id, tema_projeto, link_repositorio, data_apresentacao_id",
             )
-            .order("criado_em", { ascending: false }),
+            .order("nome_grupo", { ascending: true }),
           supabase
             .from("alunos")
             .select("id, grupo_id, nome, matricula, email, eh_lider")
@@ -288,6 +360,18 @@ export default function ProfessorPage() {
         );
       }
 
+      if (disciplinasResult.error) {
+        throw new Error(
+          `Não foi possível carregar as disciplinas: ${disciplinasResult.error.message}`,
+        );
+      }
+
+      if (turmasResult.error) {
+        throw new Error(
+          `Não foi possível carregar as turmas: ${turmasResult.error.message}`,
+        );
+      }
+
       if (gruposResult.error) {
         throw new Error(
           `Não foi possível carregar os grupos: ${gruposResult.error.message}`,
@@ -301,6 +385,10 @@ export default function ProfessorPage() {
       }
 
       setConfiguracao(configResult.data);
+      setDisciplinas(
+        parseRows(disciplinasResult.data, isDisciplina, "disciplinas"),
+      );
+      setTurmas(parseRows(turmasResult.data, isTurma, "turmas"));
       setDatas(parseRows(datasResult.data, isDataApresentacao, "datas"));
       setGrupos(parseRows(gruposResult.data, isGrupo, "grupos"));
       setAlunos(parseRows(alunosResult.data, isAluno, "integrantes"));
@@ -333,6 +421,85 @@ export default function ProfessorPage() {
     () => new Map(datas.map((data) => [data.id, data])),
     [datas],
   );
+  const disciplinasPorId = useMemo(
+    () => new Map(disciplinas.map((disciplina) => [disciplina.id, disciplina])),
+    [disciplinas],
+  );
+  const turmasPorId = useMemo(
+    () => new Map(turmas.map((turma) => [turma.id, turma])),
+    [turmas],
+  );
+  const turmasParaEdicao = turmas;
+
+  async function cadastrarDisciplina(
+    event: FormEvent<HTMLFormElement>,
+  ): Promise<void> {
+    event.preventDefault();
+    setErro("");
+    setAviso("");
+    const nome = disciplinaForm.nome.trim();
+    if (!nome) {
+      setErro("Informe o nome da disciplina.");
+      return;
+    }
+
+    setSalvandoDisciplina(true);
+    try {
+      const novaDisciplina: NovaDisciplina = { nome };
+      const { error: insertError } = await supabase
+        .from("disciplinas")
+        .insert(novaDisciplina);
+      if (insertError) {
+        throw new Error(
+          `Não foi possível cadastrar a disciplina: ${insertError.message}`,
+        );
+      }
+
+      setDisciplinaForm({ nome: "" });
+      setAviso("Disciplina cadastrada com sucesso.");
+      atualizarPainel();
+    } catch (error: unknown) {
+      setErro(mensagemErro(error));
+    } finally {
+      setSalvandoDisciplina(false);
+    }
+  }
+
+  async function cadastrarTurma(
+    event: FormEvent<HTMLFormElement>,
+  ): Promise<void> {
+    event.preventDefault();
+    setErro("");
+    setAviso("");
+    if (!turmaForm.disciplina_id || !turmaForm.nome_turma.trim()) {
+      setErro("Selecione uma disciplina e informe o nome da turma.");
+      return;
+    }
+
+    setSalvandoTurma(true);
+    try {
+      const novaTurma: NovaTurma = {
+        disciplina_id: turmaForm.disciplina_id,
+        nome_turma: turmaForm.nome_turma.trim(),
+      };
+      const { error: insertError } = await supabase
+        .from("turmas")
+        .insert(novaTurma);
+      if (insertError) {
+        throw new Error(
+          `Não foi possível cadastrar a turma: ${insertError.message}`,
+        );
+      }
+
+      setTurmaForm((atual) => ({ ...atual, nome_turma: "" }));
+      setAviso("Turma cadastrada com sucesso.");
+      atualizarPainel();
+    } catch (error: unknown) {
+      setErro(mensagemErro(error));
+    } finally {
+      setSalvandoTurma(false);
+    }
+  }
 
   async function salvarConfiguracao(
     event: FormEvent<HTMLFormElement>,
@@ -405,23 +572,19 @@ export default function ProfessorPage() {
     if (
       !dataForm.data_hora ||
       Number.isNaN(dataLocal.getTime()) ||
-      !dataForm.disciplina.trim() ||
-      !dataForm.turma.trim() ||
+      !dataForm.turma_id ||
       !Number.isInteger(vagasTotais) ||
       vagasTotais < 1
     ) {
-      setErro(
-        "Informe data, horário, disciplina, turma e pelo menos uma vaga.",
-      );
+      setErro("Informe data, horário, turma e pelo menos uma vaga.");
       return;
     }
 
     setSalvandoData(true);
     try {
       const novaData: NovaData = {
+        turma_id: dataForm.turma_id,
         data_hora: dataLocal.toISOString(),
-        disciplina: dataForm.disciplina.trim(),
-        turma: dataForm.turma.trim(),
         vagas_totais: vagasTotais,
         vagas_ocupadas: 0,
       };
@@ -446,6 +609,105 @@ export default function ProfessorPage() {
     }
   }
 
+  function iniciarEdicaoData(data: DataApresentacao): void {
+    setErro("");
+    setAviso("");
+    setDataEmEdicao({
+      id: data.id,
+      data_hora: formatarDataParaInput(data.data_hora),
+      vagas_totais: String(data.vagas_totais),
+    });
+  }
+
+  async function salvarEdicaoData(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    setErro("");
+    setAviso("");
+
+    if (!dataEmEdicao) {
+      setErro("Não há data selecionada para edição.");
+      return;
+    }
+
+    const vagasTotais = Number(dataEmEdicao.vagas_totais);
+    const dataLocal = new Date(dataEmEdicao.data_hora);
+    if (
+      Number.isNaN(dataLocal.getTime()) ||
+      !Number.isInteger(vagasTotais) ||
+      vagasTotais < 1
+    ) {
+      setErro("Informe uma data e horário válidos e pelo menos uma vaga.");
+      return;
+    }
+
+    setAtualizandoData(true);
+    try {
+      const { data: dataAtual, error: erroBusca } = await supabase
+        .from("datas_apresentacao")
+        .select("vagas_ocupadas")
+        .eq("id", dataEmEdicao.id)
+        .maybeSingle();
+
+      if (erroBusca) {
+        throw new Error(
+          `Não foi possível verificar as vagas ocupadas: ${erroBusca.message}`,
+        );
+      }
+
+      if (!dataAtual || typeof dataAtual.vagas_ocupadas !== "number") {
+        throw new Error("A data selecionada não foi encontrada.");
+      }
+
+      if (vagasTotais < dataAtual.vagas_ocupadas) {
+        const mensagem = `As vagas totais não podem ser menores que as ${dataAtual.vagas_ocupadas} vagas já ocupadas.`;
+        window.alert(mensagem);
+        setErro(mensagem);
+        return;
+      }
+
+      const { data: atualizada, error: erroAtualizacao } = await supabase
+        .from("datas_apresentacao")
+        .update({
+          vagas_totais: vagasTotais,
+          data_hora: dataLocal.toISOString(),
+        })
+        .eq("id", dataEmEdicao.id)
+        .eq("vagas_ocupadas", dataAtual.vagas_ocupadas)
+        .select(
+          "id, turma_id, data_hora, vagas_totais, vagas_ocupadas",
+        )
+        .maybeSingle();
+
+      if (erroAtualizacao) {
+        throw new Error(
+          `Não foi possível atualizar a data de apresentação: ${erroAtualizacao.message}`,
+        );
+      }
+
+      if (!isDataApresentacao(atualizada)) {
+        throw new Error(
+          "A data não foi atualizada; as vagas podem ter mudado. Atualize o painel e tente novamente.",
+        );
+      }
+
+      setDatas((atuais) =>
+        atuais
+          .map((data) => (data.id === atualizada.id ? atualizada : data))
+          .sort(
+            (a, b) =>
+              new Date(a.data_hora).getTime() -
+              new Date(b.data_hora).getTime(),
+          ),
+      );
+      setDataEmEdicao(null);
+      setAviso("Data de apresentação atualizada com sucesso.");
+    } catch (error: unknown) {
+      setErro(mensagemErro(error));
+    } finally {
+      setAtualizandoData(false);
+    }
+  }
+
   async function excluirData(data: DataApresentacao): Promise<void> {
     if (data.vagas_ocupadas > 0) {
       setErro(
@@ -456,7 +718,7 @@ export default function ProfessorPage() {
 
     if (
       !window.confirm(
-        `Remover a data ${formatarData(data.data_hora)} - ${data.disciplina}, turma ${data.turma}?`,
+        `Remover a data ${formatarData(data.data_hora)} - turma ${turmasPorId.get(data.turma_id)?.nome_turma ?? "não identificada"}?`,
       )
     ) {
       return;
@@ -498,6 +760,7 @@ export default function ProfessorPage() {
     setGrupoEmEdicao(grupo);
     setGrupoForm({
       nome_grupo: grupo.nome_grupo,
+      turma_id: grupo.turma_id,
       tema_projeto: grupo.tema_projeto,
       link_repositorio: grupo.link_repositorio ?? "",
       data_apresentacao_id: grupo.data_apresentacao_id ?? "",
@@ -534,6 +797,7 @@ export default function ProfessorPage() {
 
     if (
       !grupoForm.nome_grupo.trim() ||
+      !grupoForm.turma_id ||
       !grupoForm.tema_projeto.trim() ||
       (grupoForm.link_repositorio.trim() &&
         !/^https?:\/\/\S+$/i.test(grupoForm.link_repositorio.trim()))
@@ -541,6 +805,12 @@ export default function ProfessorPage() {
       setErro(
         "Informe o nome e tema do grupo. O link do repositório, quando preenchido, deve começar com http:// ou https://.",
       );
+      return;
+    }
+
+    const turmaDestino = turmasPorId.get(grupoForm.turma_id);
+    if (!turmaDestino) {
+      setErro("A turma selecionada não existe mais. Atualize o painel.");
       return;
     }
 
@@ -569,85 +839,38 @@ export default function ProfessorPage() {
 
     const dataAnteriorId = grupoEmEdicao.data_apresentacao_id;
     const dataNovaId = grupoForm.data_apresentacao_id || null;
-    const alterouData = dataAnteriorId !== dataNovaId;
+    const dataDestino = dataNovaId ? datasPorId.get(dataNovaId) : undefined;
+    if (dataNovaId && (!dataDestino || dataDestino.turma_id !== turmaDestino.id)) {
+      setErro("A data de apresentação precisa pertencer à turma selecionada.");
+      return;
+    }
     setSalvandoGrupo(true);
-    let vagaNovaReservada = false;
-    let grupoAtualizado = false;
 
     try {
-      if (alterouData && dataNovaId) {
-        await ajustarVaga(dataNovaId, 1);
-        vagaNovaReservada = true;
-      }
-
-      let atualizarGrupoQuery = supabase
-        .from("grupos")
-        .update({
-          nome_grupo: grupoForm.nome_grupo.trim(),
-          tema_projeto: grupoForm.tema_projeto.trim(),
-          link_repositorio: grupoForm.link_repositorio.trim() || null,
-          data_apresentacao_id: dataNovaId,
-        })
-        .eq("id", grupoEmEdicao.id);
-
-      atualizarGrupoQuery = dataAnteriorId
-        ? atualizarGrupoQuery.eq("data_apresentacao_id", dataAnteriorId)
-        : atualizarGrupoQuery.is("data_apresentacao_id", null);
-
-      const { data: grupoAtualizadoResult, error: erroGrupo } =
-        await atualizarGrupoQuery.select("id").maybeSingle();
-
-      if (erroGrupo) {
-        throw new Error(`Não foi possível atualizar o grupo: ${erroGrupo.message}`);
-      }
-      if (!grupoAtualizadoResult) {
-        throw new Error(
-          "O grupo não foi atualizado. Ele pode ter sido alterado por outro usuário; atualize o painel e tente novamente.",
-        );
-      }
-      grupoAtualizado = true;
-
-      const membrosOriginais = alunosPorGrupo.get(grupoEmEdicao.id) ?? [];
-      const idsMantidos = new Set(
-        alunosForm.flatMap((aluno) => (aluno.id ? [aluno.id] : [])),
-      );
-      const alunosAtualizados = alunosForm.map((aluno, indice) => ({
-        ...(aluno.id ? { id: aluno.id } : {}),
-        grupo_id: grupoEmEdicao.id,
+      const alunosArray = alunosForm.map((aluno, indice) => ({
         nome: aluno.nome.trim(),
         matricula: aluno.matricula.trim(),
         email: aluno.email.trim() || null,
         eh_lider: indice === 0,
       }));
+      const { error: erroAtualizacao } = await supabase.rpc(
+        "atualizar_grupo_completo",
+        {
+          p_grupo_id: grupoEmEdicao.id,
+          p_nome_grupo: grupoForm.nome_grupo.trim(),
+          p_turma_id: turmaDestino.id,
+          p_tema_projeto: grupoForm.tema_projeto.trim(),
+          p_link_repositorio: grupoForm.link_repositorio.trim() || null,
+          p_nova_data_id: dataNovaId,
+          p_antiga_data_id: dataAnteriorId,
+          p_alunos: alunosArray,
+        },
+      );
 
-      if (alunosAtualizados.length > 0) {
-        const { error: erroAlunos } = await supabase
-          .from("alunos")
-          .upsert(alunosAtualizados);
-        if (erroAlunos) {
-          throw new Error(
-            `O grupo foi atualizado, mas não foi possível salvar os alunos: ${erroAlunos.message}`,
-          );
-        }
-      }
-
-      const idsRemover = membrosOriginais
-        .filter((aluno) => !idsMantidos.has(aluno.id))
-        .map((aluno) => aluno.id);
-      if (idsRemover.length > 0) {
-        const { error: erroRemocaoAlunos } = await supabase
-          .from("alunos")
-          .delete()
-          .in("id", idsRemover);
-        if (erroRemocaoAlunos) {
-          throw new Error(
-            `O grupo e os alunos restantes foram atualizados, mas alguns alunos removidos não puderam ser excluídos: ${erroRemocaoAlunos.message}`,
-          );
-        }
-      }
-
-      if (alterouData && dataAnteriorId) {
-        await ajustarVaga(dataAnteriorId, -1);
+      if (erroAtualizacao) {
+        throw new Error(
+          `Não foi possível salvar o grupo e os alunos: ${erroAtualizacao.message}`,
+        );
       }
 
       setAviso("Grupo e alunos atualizados com sucesso.");
@@ -656,35 +879,7 @@ export default function ProfessorPage() {
       setAlunosForm([]);
       atualizarPainel();
     } catch (error: unknown) {
-      const errosRollback: string[] = [];
-
-      if (grupoAtualizado) {
-        const { error: erroRollbackGrupo } = await supabase
-          .from("grupos")
-          .update({ data_apresentacao_id: dataAnteriorId })
-          .eq("id", grupoEmEdicao.id);
-        if (erroRollbackGrupo) {
-          errosRollback.push(
-            `Não foi possível restaurar a data anterior do grupo: ${erroRollbackGrupo.message}`,
-          );
-        }
-      }
-
-      if (vagaNovaReservada && dataNovaId) {
-        try {
-          await ajustarVaga(dataNovaId, -1);
-        } catch (erroRollback: unknown) {
-          errosRollback.push(mensagemErro(erroRollback));
-        }
-      }
-
-      if (errosRollback.length > 0) {
-        atualizarPainel();
-      }
-
-      setErro(
-        [mensagemErro(error), ...errosRollback].join(" "),
-      );
+      setErro(mensagemErro(error));
     } finally {
       setSalvandoGrupo(false);
     }
@@ -825,12 +1020,18 @@ export default function ProfessorPage() {
       const dataApresentacao = data
         ? formatarData(data.data_hora)
         : "Sem data";
+      const turma = turmasPorId.get(grupo.turma_id);
+      const disciplina = turma
+        ? disciplinasPorId.get(turma.disciplina_id)
+        : undefined;
+      const nomeTurma = turma?.nome_turma ?? grupo.turma_id;
+      const nomeDisciplina = disciplina?.nome ?? "";
 
       if (membros.length === 0) {
         linhas.push([
           grupo.nome_grupo,
-          grupo.disciplina,
-          grupo.turma,
+          nomeDisciplina,
+          nomeTurma,
           grupo.tema_projeto,
           dataApresentacao,
           "0",
@@ -845,8 +1046,8 @@ export default function ProfessorPage() {
       for (const membro of membros) {
         linhas.push([
           grupo.nome_grupo,
-          grupo.disciplina,
-          grupo.turma,
+          nomeDisciplina,
+          nomeTurma,
           grupo.tema_projeto,
           dataApresentacao,
           String(membros.length),
@@ -1041,7 +1242,7 @@ export default function ProfessorPage() {
                   </div>
                 </div>
                 <form
-                  className="grid gap-4 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_150px_auto]"
+                  className="grid gap-4 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_150px_auto]"
                   onSubmit={(event) => void cadastrarData(event)}
                 >
                   <label className="space-y-2">
@@ -1063,35 +1264,28 @@ export default function ProfessorPage() {
                   </label>
                   <label className="space-y-2">
                     <span className="text-sm font-semibold text-slate-700">
-                      Disciplina
-                    </span>
-                    <input
-                      className="w-full rounded-lg border border-slate-300 px-3 py-3 text-slate-900 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
-                      onChange={(event) =>
-                        setDataForm({
-                          ...dataForm,
-                          disciplina: event.target.value,
-                        })
-                      }
-                      required
-                      value={dataForm.disciplina}
-                    />
-                  </label>
-                  <label className="space-y-2">
-                    <span className="text-sm font-semibold text-slate-700">
                       Turma
                     </span>
-                    <input
-                      className="w-full rounded-lg border border-slate-300 px-3 py-3 text-slate-900 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
+                    <select
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-slate-900 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
                       onChange={(event) =>
                         setDataForm({
                           ...dataForm,
-                          turma: event.target.value,
+                          turma_id: event.target.value,
                         })
                       }
                       required
-                      value={dataForm.turma}
-                    />
+                      value={dataForm.turma_id}
+                    >
+                      <option value="">Selecione uma turma</option>
+                      {turmas.map((turma) => (
+                        <option key={turma.id} value={turma.id}>
+                          {disciplinasPorId.get(turma.disciplina_id)?.nome ??
+                            "Disciplina"}{" "}
+                          · {turma.nome_turma}
+                        </option>
+                      ))}
+                    </select>
                   </label>
                   <label className="space-y-2">
                     <span className="text-sm font-semibold text-slate-700">
@@ -1135,14 +1329,23 @@ export default function ProfessorPage() {
                         className="flex flex-col gap-3 rounded-xl border border-slate-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
                         key={data.id}
                       >
+                        {(() => {
+                          const turma = turmasPorId.get(data.turma_id);
+                          const disciplina = turma
+                            ? disciplinasPorId.get(turma.disciplina_id)
+                            : undefined;
+                          return (
                         <div>
                           <span className="block font-medium text-slate-800">
                             {formatarData(data.data_hora)}
                           </span>
                           <span className="mt-1 block text-sm text-slate-500">
-                            {data.disciplina} · Turma {data.turma}
+                            {disciplina?.nome ?? "Disciplina"} · Turma{" "}
+                            {turma?.nome_turma ?? "não identificada"}
                           </span>
                         </div>
+                          );
+                        })()}
                         <div className="flex items-center justify-between gap-4 sm:justify-end">
                           <span className="text-sm text-slate-600">
                             <strong className="text-slate-900">
@@ -1155,7 +1358,16 @@ export default function ProfessorPage() {
                             vagas
                           </span>
                           <button
-                            aria-label={`Remover data de ${formatarData(data.data_hora)} - ${data.disciplina}, turma ${data.turma}`}
+                            aria-label={`Editar data de ${formatarData(data.data_hora)}`}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 px-3 py-2 text-xs font-semibold text-emerald-800 transition hover:bg-emerald-50"
+                            onClick={() => iniciarEdicaoData(data)}
+                            type="button"
+                          >
+                            <Pencil className="h-4 w-4" />
+                            Editar
+                          </button>
+                          <button
+                            aria-label={`Remover data de ${formatarData(data.data_hora)} - turma ${turmasPorId.get(data.turma_id)?.nome_turma ?? "não identificada"}`}
                             className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-2 text-xs font-semibold text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
                             disabled={
                               data.vagas_ocupadas > 0 ||
@@ -1183,6 +1395,143 @@ export default function ProfessorPage() {
                 </div>
               </section>
             </div>
+
+            <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-7">
+              <div className="mb-6">
+                <h2 className="text-lg font-bold text-slate-900">
+                  Disciplinas e turmas
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  Cadastre disciplinas e suas turmas para organizar as datas de
+                  apresentação.
+                </p>
+              </div>
+              <div className="grid gap-8 xl:grid-cols-2">
+                <form
+                  className="flex flex-col gap-3 sm:flex-row sm:items-end"
+                  onSubmit={(event) => void cadastrarDisciplina(event)}
+                >
+                  <label className="flex-1 space-y-2">
+                    <span className="text-sm font-semibold text-slate-700">
+                      Nova disciplina
+                    </span>
+                    <input
+                      className="w-full rounded-lg border border-slate-300 px-3.5 py-3 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
+                      maxLength={150}
+                      onChange={(event) =>
+                        setDisciplinaForm({ nome: event.target.value })
+                      }
+                      placeholder="Ex.: Sistema de Informação"
+                      required
+                      value={disciplinaForm.nome}
+                    />
+                  </label>
+                  <button
+                    className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-700 px-4 py-3 text-sm font-bold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-slate-400"
+                    disabled={salvandoDisciplina}
+                    type="submit"
+                  >
+                    {salvandoDisciplina ? (
+                      <LoaderCircle className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Plus className="h-4 w-4" />
+                    )}
+                    Cadastrar disciplina
+                  </button>
+                </form>
+                <form
+                  className="grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end"
+                  onSubmit={(event) => void cadastrarTurma(event)}
+                >
+                  <label className="space-y-2">
+                    <span className="text-sm font-semibold text-slate-700">
+                      Disciplina da turma
+                    </span>
+                    <select
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-3 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
+                      onChange={(event) =>
+                        setTurmaForm({
+                          ...turmaForm,
+                          disciplina_id: event.target.value,
+                        })
+                      }
+                      required
+                      value={turmaForm.disciplina_id}
+                    >
+                      <option value="">Selecione</option>
+                      {disciplinas.map((disciplina) => (
+                        <option key={disciplina.id} value={disciplina.id}>
+                          {disciplina.nome}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="space-y-2">
+                    <span className="text-sm font-semibold text-slate-700">
+                      Nome da turma
+                    </span>
+                    <input
+                      className="w-full rounded-lg border border-slate-300 px-3.5 py-3 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
+                      maxLength={100}
+                      onChange={(event) =>
+                        setTurmaForm({
+                          ...turmaForm,
+                          nome_turma: event.target.value,
+                        })
+                      }
+                      placeholder="Ex.: 2º Período A"
+                      required
+                      value={turmaForm.nome_turma}
+                    />
+                  </label>
+                  <button
+                    className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-700 px-4 py-3 text-sm font-bold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-slate-400"
+                    disabled={salvandoTurma || disciplinas.length === 0}
+                    type="submit"
+                  >
+                    {salvandoTurma ? (
+                      <LoaderCircle className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Plus className="h-4 w-4" />
+                    )}
+                    Cadastrar turma
+                  </button>
+                </form>
+              </div>
+              <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {disciplinas.map((disciplina) => {
+                  const turmasDaDisciplina = turmas.filter(
+                    (turma) => turma.disciplina_id === disciplina.id,
+                  );
+                  return (
+                    <div
+                      className="rounded-xl border border-slate-200 bg-slate-50 p-4"
+                      key={disciplina.id}
+                    >
+                      <h3 className="font-semibold text-slate-900">
+                        {disciplina.nome}
+                      </h3>
+                      {turmasDaDisciplina.length === 0 ? (
+                        <p className="mt-2 text-sm text-slate-500">
+                          Nenhuma turma cadastrada.
+                        </p>
+                      ) : (
+                        <ul className="mt-2 flex flex-wrap gap-2">
+                          {turmasDaDisciplina.map((turma) => (
+                            <li
+                              className="rounded-full bg-white px-3 py-1 text-sm text-slate-700 ring-1 ring-slate-200"
+                              key={turma.id}
+                            >
+                              {turma.nome_turma}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
 
             <section className="mt-6 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
               <div className="flex flex-col gap-4 border-b border-slate-200 p-5 sm:flex-row sm:items-center sm:justify-between sm:px-7">
@@ -1242,6 +1591,10 @@ export default function ProfessorPage() {
                         const data = grupo.data_apresentacao_id
                           ? datasPorId.get(grupo.data_apresentacao_id)
                           : undefined;
+                        const turma = turmasPorId.get(grupo.turma_id);
+                        const disciplina = turma
+                          ? disciplinasPorId.get(turma.disciplina_id)
+                          : undefined;
                         const expandido = gruposExpandidos.has(grupo.id);
 
                         return (
@@ -1252,6 +1605,8 @@ export default function ProfessorPage() {
                             dataLabel={
                               data ? formatarData(data.data_hora) : "Sem data"
                             }
+                            disciplinaLabel={disciplina?.nome ?? "—"}
+                            turmaLabel={turma?.nome_turma ?? "—"}
                             expandido={expandido}
                             excluindo={excluindoGrupo === grupo.id}
                             onExpandir={() => alternarMembros(grupo.id)}
@@ -1268,6 +1623,102 @@ export default function ProfessorPage() {
           </>
         )}
       </div>
+      {dataEmEdicao && (
+        <div
+          aria-labelledby="titulo-edicao-data"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4"
+          role="dialog"
+        >
+          <section className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl sm:p-8">
+            <header className="mb-6 flex items-start justify-between gap-4">
+              <div>
+                <h2
+                  className="text-xl font-bold text-slate-950"
+                  id="titulo-edicao-data"
+                >
+                  Editar data de apresentação
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  Vagas ocupadas:{" "}
+                  {datasPorId.get(dataEmEdicao.id)?.vagas_ocupadas ?? 0}
+                </p>
+              </div>
+              <button
+                aria-label="Fechar edição da data"
+                className="rounded-lg p-2 text-slate-500 transition hover:bg-slate-100 disabled:opacity-50"
+                disabled={atualizandoData}
+                onClick={() => setDataEmEdicao(null)}
+                type="button"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </header>
+            <form
+              className="space-y-5"
+              onSubmit={(event) => void salvarEdicaoData(event)}
+            >
+              <label className="block space-y-2">
+                <span className="text-sm font-semibold text-slate-700">
+                  Data e horário
+                </span>
+                <input
+                  className="w-full rounded-lg border border-slate-300 px-3.5 py-3 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
+                  onChange={(event) =>
+                    setDataEmEdicao({
+                      ...dataEmEdicao,
+                      data_hora: event.target.value,
+                    })
+                  }
+                  required
+                  type="datetime-local"
+                  value={dataEmEdicao.data_hora}
+                />
+              </label>
+              <label className="block space-y-2">
+                <span className="text-sm font-semibold text-slate-700">
+                  Vagas totais
+                </span>
+                <input
+                  className="w-full rounded-lg border border-slate-300 px-3.5 py-3 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
+                  min={datasPorId.get(dataEmEdicao.id)?.vagas_ocupadas ?? 0}
+                  onChange={(event) =>
+                    setDataEmEdicao({
+                      ...dataEmEdicao,
+                      vagas_totais: event.target.value,
+                    })
+                  }
+                  required
+                  type="number"
+                  value={dataEmEdicao.vagas_totais}
+                />
+              </label>
+              <footer className="flex flex-col-reverse justify-end gap-3 border-t border-slate-200 pt-5 sm:flex-row">
+                <button
+                  className="rounded-lg border border-slate-300 px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+                  disabled={atualizandoData}
+                  onClick={() => setDataEmEdicao(null)}
+                  type="button"
+                >
+                  Cancelar
+                </button>
+                <button
+                  className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-700 px-5 py-3 text-sm font-bold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-slate-400"
+                  disabled={atualizandoData}
+                  type="submit"
+                >
+                  {atualizandoData ? (
+                    <LoaderCircle className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Save className="h-4 w-4" />
+                  )}
+                  {atualizandoData ? "Salvando..." : "Salvar data"}
+                </button>
+              </footer>
+            </form>
+          </section>
+        </div>
+      )}
       {grupoEmEdicao && grupoForm && (
         <div
           aria-labelledby="titulo-edicao-grupo"
@@ -1355,6 +1806,32 @@ export default function ProfessorPage() {
                 </label>
                 <label className="space-y-2 sm:col-span-2">
                   <span className="text-sm font-semibold text-slate-700">
+                    Turma
+                  </span>
+                  <select
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-3 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
+                    onChange={(event) =>
+                      setGrupoForm({
+                        ...grupoForm,
+                        turma_id: event.target.value,
+                        data_apresentacao_id: "",
+                      })
+                    }
+                    required
+                    value={grupoForm.turma_id}
+                  >
+                    <option value="">Selecione uma turma</option>
+                    {turmasParaEdicao.map((turma) => (
+                      <option key={turma.id} value={turma.id}>
+                        {disciplinasPorId.get(turma.disciplina_id)?.nome ??
+                          "Disciplina"}{" "}
+                        · {turma.nome_turma}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="space-y-2 sm:col-span-2">
+                  <span className="text-sm font-semibold text-slate-700">
                     Data de apresentação
                   </span>
                   <select
@@ -1371,17 +1848,20 @@ export default function ProfessorPage() {
                     {datas
                       .filter(
                         (data) =>
-                          data.disciplina === grupoEmEdicao.disciplina &&
-                          data.turma === grupoEmEdicao.turma &&
+                          data.turma_id === grupoForm.turma_id &&
                           (data.vagas_ocupadas < data.vagas_totais ||
                             data.id ===
                               grupoEmEdicao.data_apresentacao_id),
                       )
                       .map((data) => (
                         <option key={data.id} value={data.id}>
-                          {formatarData(data.data_hora)} · {data.disciplina} ·
-                          Turma {data.turma} ·{" "}
-                          {data.vagas_totais - data.vagas_ocupadas} vagas
+                          {formatarData(data.data_hora)} ·{" "}
+                          {data.vagas_totais -
+                            data.vagas_ocupadas +
+                            (data.id === grupoEmEdicao.data_apresentacao_id
+                              ? 1
+                              : 0)}{" "}
+                          vagas disponíveis
                           {data.id === grupoEmEdicao.data_apresentacao_id
                             ? " (atual)"
                             : ""}
@@ -1531,6 +2011,8 @@ interface FragmentGrupoProps {
   grupo: Grupo;
   membros: Aluno[];
   dataLabel: string;
+  disciplinaLabel: string;
+  turmaLabel: string;
   expandido: boolean;
   excluindo: boolean;
   onExpandir: () => void;
@@ -1542,6 +2024,8 @@ function FragmentGrupo({
   grupo,
   membros,
   dataLabel,
+  disciplinaLabel,
+  turmaLabel,
   expandido,
   excluindo,
   onExpandir,
@@ -1554,8 +2038,8 @@ function FragmentGrupo({
         <td className="px-5 py-4 font-semibold text-slate-900">
           {grupo.nome_grupo}
         </td>
-        <td className="px-5 py-4">{grupo.disciplina}</td>
-        <td className="px-5 py-4">{grupo.turma}</td>
+        <td className="px-5 py-4">{disciplinaLabel}</td>
+        <td className="px-5 py-4">{turmaLabel}</td>
         <td className="max-w-64 px-5 py-4">
           <span className="line-clamp-2" title={grupo.tema_projeto}>
             {grupo.tema_projeto}

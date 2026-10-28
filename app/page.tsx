@@ -17,8 +17,10 @@ import { supabase } from "@/lib/supabase";
 import type {
   Configuracao,
   DataApresentacao,
+  Disciplina,
   NovoAluno,
   NovoGrupo,
+  Turma,
 } from "@/types/database";
 
 type LimitesInscricao = Pick<
@@ -34,23 +36,16 @@ interface MembroFormulario {
 
 interface GrupoFormulario {
   nome_grupo: string;
-  disciplina: string;
-  turma: string;
+  disciplina_id: string;
+  turma_id: string;
   tema_projeto: string;
   data_apresentacao_id: string;
 }
 
-const disciplinas = [
-  "Back-End Frameworks",
-  "Estrutura de Dados",
-  "Sistemas Operacionais",
-  "Big Data",
-];
-
 const formularioInicial: GrupoFormulario = {
   nome_grupo: "",
-  disciplina: "",
-  turma: "",
+  disciplina_id: "",
+  turma_id: "",
   tema_projeto: "",
   data_apresentacao_id: "",
 };
@@ -86,11 +81,35 @@ function isDataApresentacao(value: unknown): value is DataApresentacao {
   const data = value as Record<string, unknown>;
   return (
     typeof data.id === "string" &&
+    typeof data.turma_id === "string" &&
     typeof data.data_hora === "string" &&
-    typeof data.disciplina === "string" &&
-    typeof data.turma === "string" &&
     typeof data.vagas_totais === "number" &&
     typeof data.vagas_ocupadas === "number"
+  );
+}
+
+function isDisciplina(value: unknown): value is Disciplina {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const disciplina = value as Record<string, unknown>;
+  return (
+    typeof disciplina.id === "string" &&
+    typeof disciplina.nome === "string"
+  );
+}
+
+function isTurma(value: unknown): value is Turma {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const turma = value as Record<string, unknown>;
+  return (
+    typeof turma.id === "string" &&
+    typeof turma.disciplina_id === "string" &&
+    typeof turma.nome_turma === "string"
   );
 }
 
@@ -152,13 +171,12 @@ function validarMembro(
 
 async function reservarVaga(
   dataId: string,
-  disciplina: string,
-  turma: string,
+  turmaId: string,
 ): Promise<boolean> {
   for (let tentativa = 0; tentativa < 5; tentativa += 1) {
     const { data: dataAtual, error: erroBusca } = await supabase
       .from("datas_apresentacao")
-      .select("id, disciplina, turma, vagas_totais, vagas_ocupadas")
+      .select("id, turma_id, vagas_totais, vagas_ocupadas")
       .eq("id", dataId)
       .maybeSingle();
 
@@ -170,9 +188,9 @@ async function reservarVaga(
       throw new Error("A data selecionada não está mais disponível.");
     }
 
-    if (dataAtual.disciplina !== disciplina || dataAtual.turma !== turma) {
+    if (dataAtual.turma_id !== turmaId) {
       throw new Error(
-        "A data selecionada não corresponde à disciplina e turma informadas.",
+        "A data selecionada não corresponde à turma informada.",
       );
     }
 
@@ -193,8 +211,7 @@ async function reservarVaga(
       .eq("id", dataId)
       .eq("vagas_ocupadas", dataAtual.vagas_ocupadas)
       .eq("vagas_totais", dataAtual.vagas_totais)
-      .eq("disciplina", disciplina)
-      .eq("turma", turma)
+      .eq("turma_id", turmaId)
       .select("id")
       .maybeSingle();
 
@@ -255,6 +272,8 @@ async function liberarVaga(dataId: string): Promise<void> {
 export default function Home() {
   const [limites, setLimites] = useState<LimitesInscricao | null>(null);
   const [datas, setDatas] = useState<DataApresentacao[]>([]);
+  const [disciplinas, setDisciplinas] = useState<Disciplina[]>([]);
+  const [turmas, setTurmas] = useState<Turma[]>([]);
   const [grupo, setGrupo] = useState<GrupoFormulario>(formularioInicial);
   const [membros, setMembros] = useState<MembroFormulario[]>([membroInicial()]);
   const [carregandoInicial, setCarregandoInicial] = useState(true);
@@ -272,7 +291,12 @@ export default function Home() {
       setErroInicial("");
 
       try {
-        const [configuracaoResult, datasResult] = await Promise.all([
+        const [
+          configuracaoResult,
+          disciplinasResult,
+          turmasResult,
+          datasResult,
+        ] = await Promise.all([
           supabase
             .from("configuracoes")
             .select(
@@ -281,10 +305,16 @@ export default function Home() {
             .limit(1)
             .maybeSingle(),
           supabase
+            .from("disciplinas")
+            .select("id, nome")
+            .order("nome", { ascending: true }),
+          supabase
+            .from("turmas")
+            .select("id, disciplina_id, nome_turma")
+            .order("nome_turma", { ascending: true }),
+          supabase
             .from("datas_apresentacao")
-            .select(
-              "id, data_hora, disciplina, turma, vagas_totais, vagas_ocupadas",
-            )
+            .select("id, turma_id, data_hora, vagas_totais, vagas_ocupadas")
             .order("data_hora", { ascending: true }),
         ]);
 
@@ -300,6 +330,18 @@ export default function Home() {
           );
         }
 
+        if (disciplinasResult.error) {
+          throw new Error(
+            `Não foi possível carregar as disciplinas: ${disciplinasResult.error.message}`,
+          );
+        }
+
+        if (turmasResult.error) {
+          throw new Error(
+            `Não foi possível carregar as turmas: ${turmasResult.error.message}`,
+          );
+        }
+
         if (!isLimitesInscricao(configuracaoResult.data)) {
           throw new Error(
             "As configurações de quantidade de alunos estão ausentes ou inválidas.",
@@ -309,9 +351,15 @@ export default function Home() {
         const datasValidas = (datasResult.data ?? []).filter(
           isDataApresentacao,
         );
+        const disciplinasValidas = (disciplinasResult.data ?? []).filter(
+          isDisciplina,
+        );
+        const turmasValidas = (turmasResult.data ?? []).filter(isTurma);
 
         if (ativo) {
           setLimites(configuracaoResult.data);
+          setDisciplinas(disciplinasValidas);
+          setTurmas(turmasValidas);
           setMembros(
             Array.from(
               { length: configuracaoResult.data.limite_alunos_min },
@@ -352,9 +400,12 @@ export default function Home() {
 
   const datasDisponiveis = datas.filter(
     (data) =>
-      data.disciplina === grupo.disciplina &&
-      data.turma === grupo.turma &&
+      data.turma_id === grupo.turma_id &&
+      grupo.turma_id !== "" &&
       data.vagas_ocupadas < data.vagas_totais,
+  );
+  const turmasDisponiveis = turmas.filter(
+    (turma) => turma.disciplina_id === grupo.disciplina_id,
   );
 
   function atualizarMembro(
@@ -402,12 +453,37 @@ export default function Home() {
 
     if (
       !grupo.nome_grupo.trim() ||
-      !grupo.disciplina ||
-      !grupo.turma.trim() ||
+      !grupo.disciplina_id ||
+      !grupo.turma_id ||
       !grupo.tema_projeto.trim() ||
       !grupo.data_apresentacao_id
     ) {
       setErroFormulario("Preencha todos os campos obrigatórios do grupo.");
+      return;
+    }
+
+    const turmaSelecionada = turmas.find(
+      (turma) =>
+        turma.id === grupo.turma_id &&
+        turma.disciplina_id === grupo.disciplina_id,
+    );
+    if (!turmaSelecionada) {
+      setErroFormulario(
+        "A turma selecionada não pertence à disciplina escolhida.",
+      );
+      return;
+    }
+
+    const dataSelecionada = datas.find(
+      (data) =>
+        data.id === grupo.data_apresentacao_id &&
+        data.turma_id === turmaSelecionada.id &&
+        data.vagas_ocupadas < data.vagas_totais,
+    );
+    if (!dataSelecionada) {
+      setErroFormulario(
+        "A data selecionada não está disponível para a turma escolhida.",
+      );
       return;
     }
 
@@ -426,8 +502,7 @@ export default function Home() {
     try {
       vagaReservada = await reservarVaga(
         grupo.data_apresentacao_id,
-        grupo.disciplina,
-        grupo.turma.trim(),
+        turmaSelecionada.id,
       );
       if (!vagaReservada) {
         setErroFormulario(
@@ -439,8 +514,7 @@ export default function Home() {
 
       const novoGrupo: NovoGrupo = {
         nome_grupo: grupo.nome_grupo.trim(),
-        disciplina: grupo.disciplina,
-        turma: grupo.turma.trim(),
+        turma_id: turmaSelecionada.id,
         tema_projeto: grupo.tema_projeto.trim(),
         link_repositorio: null,
         data_apresentacao_id: grupo.data_apresentacao_id,
@@ -637,17 +711,18 @@ export default function Home() {
                   onChange={(event) =>
                     setGrupo({
                       ...grupo,
-                      disciplina: event.target.value,
+                      disciplina_id: event.target.value,
+                      turma_id: "",
                       data_apresentacao_id: "",
                     })
                   }
                   required
-                  value={grupo.disciplina}
+                  value={grupo.disciplina_id}
                 >
                   <option value="">Selecione uma disciplina</option>
                   {disciplinas.map((disciplina) => (
-                    <option key={disciplina} value={disciplina}>
-                      {disciplina}
+                    <option key={disciplina.id} value={disciplina.id}>
+                      {disciplina.nome}
                     </option>
                   ))}
                 </select>
@@ -657,21 +732,32 @@ export default function Home() {
                 <span className="text-sm font-semibold text-slate-700">
                   Turma <span className="text-red-600">*</span>
                 </span>
-                <input
-                  autoComplete="off"
-                  className="w-full rounded-lg border border-slate-300 px-3.5 py-3 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
-                  maxLength={50}
+                <select
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-3 text-slate-900 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15 disabled:cursor-not-allowed disabled:bg-slate-100"
+                  disabled={!grupo.disciplina_id}
                   onChange={(event) =>
                     setGrupo({
                       ...grupo,
-                      turma: event.target.value,
+                      turma_id: event.target.value,
                       data_apresentacao_id: "",
                     })
                   }
-                  placeholder="Ex.: 3º semestre - A"
                   required
-                  value={grupo.turma}
-                />
+                  value={grupo.turma_id}
+                >
+                  <option value="">
+                    {grupo.disciplina_id
+                      ? turmasDisponiveis.length > 0
+                        ? "Selecione uma turma"
+                        : "Não há turmas cadastradas para esta disciplina"
+                      : "Selecione a disciplina primeiro"}
+                  </option>
+                  {turmasDisponiveis.map((turma) => (
+                    <option key={turma.id} value={turma.id}>
+                      {turma.nome_turma}
+                    </option>
+                  ))}
+                </select>
               </label>
 
               <label className="space-y-2 sm:col-span-2">
@@ -697,7 +783,7 @@ export default function Home() {
                 </span>
                 <select
                   className="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-3 text-slate-900 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15 disabled:cursor-not-allowed disabled:bg-slate-100"
-                  disabled={!grupo.disciplina || !grupo.turma || datasDisponiveis.length === 0}
+                  disabled={!grupo.turma_id || datasDisponiveis.length === 0}
                   onChange={(event) =>
                     setGrupo({
                       ...grupo,
@@ -708,11 +794,11 @@ export default function Home() {
                   value={grupo.data_apresentacao_id}
                 >
                   <option value="">
-                    {!grupo.disciplina || !grupo.turma
-                      ? "Selecione a disciplina e a turma primeiro"
+                    {!grupo.turma_id
+                      ? "Selecione a turma primeiro"
                       : datasDisponiveis.length > 0
                         ? "Selecione uma data disponível"
-                        : "Não há datas disponíveis para esta disciplina e turma"}
+                        : "Não há datas disponíveis para esta turma"}
                   </option>
                   {datasDisponiveis.map((data) => (
                     <option key={data.id} value={data.id}>
@@ -725,12 +811,10 @@ export default function Home() {
                     </option>
                   ))}
                 </select>
-                {grupo.disciplina &&
-                  grupo.turma &&
-                  datasDisponiveis.length === 0 && (
+                {grupo.turma_id && datasDisponiveis.length === 0 && (
                   <span className="block text-sm text-amber-700">
-                    Não há horários com vagas para a disciplina e turma
-                    selecionadas. Tente novamente mais tarde.
+                    Não há horários com vagas para a turma selecionada. Tente
+                    novamente mais tarde.
                   </span>
                 )}
               </label>

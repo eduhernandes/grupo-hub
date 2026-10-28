@@ -7,22 +7,30 @@ export interface Configuracao {
 
 export interface DataApresentacao {
   id: string;
+  turma_id: string;
   data_hora: string;
-  disciplina: string;
-  turma: string;
   vagas_totais: number;
   vagas_ocupadas: number;
+}
+
+export interface Disciplina {
+  id: string;
+  nome: string;
+}
+
+export interface Turma {
+  id: string;
+  disciplina_id: string;
+  nome_turma: string;
 }
 
 export interface Grupo {
   id: string;
   nome_grupo: string;
-  disciplina: string;
-  turma: string;
+  turma_id: string;
   tema_projeto: string;
   link_repositorio: string | null;
   data_apresentacao_id: string | null;
-  criado_em: string;
 }
 
 export interface Aluno {
@@ -34,6 +42,8 @@ export interface Aluno {
   eh_lider: boolean;
 }
 
-export type NovoGrupo = Omit<Grupo, "id" | "criado_em">;
+export type NovoGrupo = Omit<Grupo, "id">;
 export type NovoAluno = Omit<Aluno, "id">;
 export type NovaData = Omit<DataApresentacao, "id">;
+export type NovaDisciplina = Omit<Disciplina, "id">;
+export type NovaTurma = Omit<Turma, "id">;
