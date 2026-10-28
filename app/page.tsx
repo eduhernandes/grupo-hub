@@ -472,17 +472,36 @@ export default function Home() {
     setErroFormulario("");
     setConsultandoMatriculas((atuais) => new Set(atuais).add(membro.id));
     try {
-      const { data, error } = await supabase
+      const resultadoExato = await supabase
         .from("alunos_permitidos")
         .select("nome")
         .eq("turma_id", turmaId)
         .eq("matricula", matricula)
         .maybeSingle();
 
-      if (error) {
+      if (resultadoExato.error) {
         throw new Error(
-          `Não foi possível consultar a matrícula: ${error.message}`,
+          `Não foi possível consultar a matrícula: ${resultadoExato.error.message}`,
         );
+      }
+
+      let nomeEncontrado = resultadoExato.data?.nome;
+      if (!nomeEncontrado) {
+        const matriculaComZero = `0${matricula}`;
+        const resultadoComZero = await supabase
+          .from("alunos_permitidos")
+          .select("nome")
+          .eq("turma_id", turmaId)
+          .eq("matricula", matriculaComZero)
+          .maybeSingle();
+
+        if (resultadoComZero.error) {
+          throw new Error(
+            `Não foi possível consultar a matrícula com zero à esquerda: ${resultadoComZero.error.message}`,
+          );
+        }
+
+        nomeEncontrado = resultadoComZero.data?.nome;
       }
 
       setMembros((atuais) =>
@@ -495,10 +514,10 @@ export default function Home() {
             return aluno;
           }
 
-          if (data && typeof data.nome === "string") {
+          if (typeof nomeEncontrado === "string") {
             return {
               ...aluno,
-              nome: data.nome,
+              nome: nomeEncontrado,
               nomeEncontradoNaTurmaId: turmaId,
             };
           }
