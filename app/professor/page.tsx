@@ -32,8 +32,6 @@ import type {
   Turma,
 } from "@/types/database";
 
-export const dynamic = 'force-dynamic'
-
 type ConfiguracaoForm = Pick<
   Configuracao,
   | "id"
