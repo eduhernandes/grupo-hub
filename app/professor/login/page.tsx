@@ -14,26 +14,24 @@ export default function LoginProfessor() {
   )
 
   const handleGoogleLogin = async () => {
-    try {
-      setLoading(true)
-      setErro(null)
+  try {
+    setLoading(true)
+    setErro(null)
 
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: {
-          redirectTo: `${window.location.origin}/professor`,
-        },
-      })
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: `${window.location.origin}/auth/callback?next=/professor`,
+      },
+    })
 
-      if (error) {
-        setErro(error.message)
-      }
-    } catch (e: any) {
-      setErro('Ocorreu um erro ao tentar conectar com o Google.')
-    } finally {
-      setLoading(false)
-    }
+    if (error) setErro(error.message)
+  } catch (e: any) {
+    setErro('Ocorreu um erro ao tentar conectar com o Google.')
+  } finally {
+    setLoading(false)
   }
+}
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
