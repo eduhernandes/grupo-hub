@@ -8,6 +8,7 @@ import {
   FileUp,
   GraduationCap,
   LogOut,
+  Pencil,
   Plus,
   Save,
   Settings,
@@ -174,6 +175,8 @@ export default function PainelProfessor() {
   const [modalAlunoAberto, setModalAlunoAberto] = useState(false)
   const [modalCsvAberto, setModalCsvAberto] = useState(false)
   const [modalHorarioAberto, setModalHorarioAberto] = useState(false)
+  const [slotEditando, setSlotEditando] = useState<DataApresentacao | null>(null)
+  const [slotExcluindoId, setSlotExcluindoId] = useState<string | null>(null)
 
   const disciplinaAtiva = disciplinas.find((disciplina) => disciplina.id === disciplinaId)
   const turmaAtiva = turmas.find((turma) => turma.id === turmaId)
@@ -468,6 +471,54 @@ export default function PainelProfessor() {
       setErroAcao(`Não foi possível excluir o aluno: ${getErrorMessage(error)}`)
     } finally {
       setAlunoRemovendo(null)
+    }
+  }
+
+  const handleExcluirHorario = async (slot: DataApresentacao) => {
+    const reservado = grupos.some((grupo) => grupo.data_apresentacao_id === slot.id)
+    if (slot.vagas_ocupadas > 0 || reservado) {
+      setErroAcao('Este horário tem grupos agendados e não pode ser excluído.')
+      return
+    }
+
+    if (!confirm(`Deseja excluir o horário de ${formatarDataHora(slot.data_hora)}?`)) return
+
+    try {
+      setSlotExcluindoId(slot.id)
+      setErroAcao(null)
+
+      const { data: grupoExistente, error: erroBusca } = await supabase
+        .from('grupos')
+        .select('id')
+        .eq('data_apresentacao_id', slot.id)
+        .limit(1)
+        .maybeSingle()
+
+      if (erroBusca) throw erroBusca
+      if (grupoExistente) {
+        throw new Error('Este horário tem grupo(s) agendado(s) e não pode ser excluído.')
+      }
+
+      const { data: horarioExcluido, error } = await supabase
+        .from('datas_apresentacao')
+        .delete()
+        .eq('id', slot.id)
+        .eq('turma_id', turmaId)
+        .eq('vagas_ocupadas', 0)
+        .select('id')
+        .maybeSingle()
+
+      if (error) throw error
+      if (!horarioExcluido) {
+        throw new Error('O horário mudou ou já foi removido. Atualize os dados e tente novamente.')
+      }
+
+      await atualizarDadosTurma()
+    } catch (error) {
+      console.error('Erro ao excluir horário:', error)
+      setErroAcao(`Não foi possível excluir o horário: ${getErrorMessage(error)}`)
+    } finally {
+      setSlotExcluindoId(null)
     }
   }
 
@@ -798,7 +849,7 @@ export default function PainelProfessor() {
                     <h2 className="text-lg font-bold text-slate-900">Datas e horários de apresentação</h2>
                     <p className="text-sm text-slate-500">Ocupação e disponibilidade atualizadas conforme os agendamentos.</p>
                   </div>
-                  <button className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700" onClick={() => setModalHorarioAberto(true)} type="button">
+                  <button className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700" onClick={() => { setSlotEditando(null); setModalHorarioAberto(true) }} type="button">
                     <Plus size={16} /> Cadastrar horário
                   </button>
                 </div>
@@ -842,14 +893,38 @@ export default function PainelProfessor() {
                             </div>
                           </div>
 
-                          {gruposDoSlot.length > 0 && (
-                            <div className="mt-4 border-t border-slate-100 pt-3">
+                          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-3">
+                            {gruposDoSlot.length > 0 ? (
+                              <div>
                               <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Grupos neste horário</p>
                               <ul className="space-y-1 text-sm text-slate-700">
                                 {gruposDoSlot.map((grupo) => <li key={grupo.id}>{grupo.nome_grupo}</li>)}
                               </ul>
+                              </div>
+                            ) : <span className="text-xs text-slate-500">Nenhum grupo agendado</span>}
+                            <div className="ml-auto flex items-center gap-2">
+                              <button
+                                aria-label={`Editar horário de ${dataDoSlot(slot)}`}
+                                className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                                onClick={() => { setSlotEditando(slot); setModalHorarioAberto(true) }}
+                                title="Editar horário"
+                                type="button"
+                              >
+                                <Pencil size={15} /> Editar
+                              </button>
+                              <button
+                                aria-label={`Excluir horário de ${dataDoSlot(slot)}`}
+                                className="inline-flex items-center gap-2 rounded-lg border border-red-200 px-3 py-2 text-sm font-medium text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
+                                disabled={slotExcluindoId === slot.id || slot.vagas_ocupadas > 0 || gruposDoSlot.length > 0}
+                                onClick={() => void handleExcluirHorario(slot)}
+                                title={slot.vagas_ocupadas > 0 || gruposDoSlot.length > 0 ? 'Não é possível excluir um horário com grupos agendados' : 'Excluir horário'}
+                                type="button"
+                              >
+                                <Trash2 size={15} />
+                                {slotExcluindoId === slot.id ? 'Excluindo...' : 'Excluir'}
+                              </button>
                             </div>
-                          )}
+                          </div>
                         </article>
                       )
                     })}
@@ -963,9 +1038,14 @@ export default function PainelProfessor() {
       />
       <ModalCadastrarHorario
         isOpen={modalHorarioAberto}
-        onClose={() => setModalHorarioAberto(false)}
+        onClose={() => {
+          setModalHorarioAberto(false)
+          setSlotEditando(null)
+        }}
         onSuccess={atualizarDadosTurma}
+        slot={slotEditando}
         turmaId={turmaId}
+        key={slotEditando?.id ?? 'novo-slot'}
       />
     </div>
   )

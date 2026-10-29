@@ -3,11 +3,12 @@
 import { useMemo, useState, type FormEvent } from 'react'
 import { CalendarPlus, X } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
-import type { Database, NovaData } from '@/types/database'
+import type { DataApresentacao, Database, NovaData } from '@/types/database'
 
 interface Props {
   isOpen: boolean
   turmaId: string
+  slot?: DataApresentacao | null
   onClose: () => void
   onSuccess: () => Promise<void>
 }
@@ -16,11 +17,32 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Ocorreu um erro inesperado.'
 }
 
-export default function ModalCadastrarHorario({ isOpen, turmaId, onClose, onSuccess }: Props) {
-  const [data, setData] = useState('')
-  const [horaInicio, setHoraInicio] = useState('')
-  const [horaFim, setHoraFim] = useState('')
-  const [vagas, setVagas] = useState(1)
+function toDatetimeLocalParts(value: string): { data: string; hora: string } {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return { data: '', hora: '' }
+
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000)
+    .toISOString()
+    .slice(0, 16)
+
+  return { data: local.slice(0, 10), hora: local.slice(11, 16) }
+}
+
+export default function ModalCadastrarHorario({
+  isOpen,
+  turmaId,
+  slot = null,
+  onClose,
+  onSuccess,
+}: Props) {
+  const partesInicio = slot ? toDatetimeLocalParts(slot.data_hora) : { data: '', hora: '' }
+  const partesFim = slot?.data_hora_fim
+    ? toDatetimeLocalParts(slot.data_hora_fim)
+    : { data: '', hora: '' }
+  const [data, setData] = useState(partesInicio.data)
+  const [horaInicio, setHoraInicio] = useState(partesInicio.hora)
+  const [horaFim, setHoraFim] = useState(partesFim.hora)
+  const [vagas, setVagas] = useState(slot?.vagas_totais ?? 1)
   const [loading, setLoading] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
   const supabase = useMemo(
@@ -57,20 +79,34 @@ export default function ModalCadastrarHorario({ isOpen, turmaId, onClose, onSucc
     try {
       setLoading(true)
       setErro(null)
-      const slot: NovaData = {
+      const horario: NovaData = {
         turma_id: turmaId,
         data_hora: inicio.toISOString(),
         data_hora_fim: fim.toISOString(),
         vagas_totais: vagas,
-        vagas_ocupadas: 0,
+        vagas_ocupadas: slot?.vagas_ocupadas ?? 0,
       }
-      const { error } = await supabase.from('datas_apresentacao').insert(slot)
-      if (error) throw error
+      const result = slot
+        ? await supabase
+            .from('datas_apresentacao')
+            .update(horario)
+            .eq('id', slot.id)
+            .eq('turma_id', turmaId)
+            .select('id')
+            .maybeSingle()
+        : await supabase.from('datas_apresentacao').insert(horario).select('id').maybeSingle()
 
-      setData('')
-      setHoraInicio('')
-      setHoraFim('')
-      setVagas(1)
+      if (result.error) throw result.error
+      if (slot && !result.data) {
+        throw new Error('O horário não foi encontrado nesta turma ou não pode mais ser editado.')
+      }
+
+      if (!slot) {
+        setData('')
+        setHoraInicio('')
+        setHoraFim('')
+        setVagas(1)
+      }
       await onSuccess()
       onClose()
     } catch (error) {
@@ -93,7 +129,7 @@ export default function ModalCadastrarHorario({ isOpen, turmaId, onClose, onSucc
           <div className="flex items-center gap-3">
             <CalendarPlus className="h-5 w-5 text-blue-600" />
             <h2 className="font-semibold text-slate-900" id="modal-cadastrar-horario-titulo">
-              Cadastrar slot de apresentação
+              {slot ? 'Editar slot de apresentação' : 'Cadastrar slot de apresentação'}
             </h2>
           </div>
           <button aria-label="Fechar" className="text-slate-400 hover:text-slate-700" onClick={onClose} type="button">
@@ -120,14 +156,14 @@ export default function ModalCadastrarHorario({ isOpen, turmaId, onClose, onSucc
           </div>
           <label className="block space-y-1 text-sm font-medium text-slate-700">
             Vagas de grupos
-            <input className="w-full rounded-lg border border-slate-300 px-3 py-2" min={1} onChange={(event) => setVagas(Number(event.target.value))} required step={1} type="number" value={vagas} />
+            <input className="w-full rounded-lg border border-slate-300 px-3 py-2" min={Math.max(1, slot?.vagas_ocupadas ?? 0)} onChange={(event) => setVagas(Number(event.target.value))} required step={1} type="number" value={vagas} />
           </label>
           <div className="flex justify-end gap-3 border-t border-slate-100 pt-4">
             <button className="rounded-lg px-4 py-2 text-sm text-slate-600 hover:bg-slate-50" onClick={onClose} type="button">
               Cancelar
             </button>
             <button className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50" disabled={loading} type="submit">
-              {loading ? 'Salvando...' : 'Cadastrar horário'}
+              {loading ? 'Salvando...' : slot ? 'Salvar alterações' : 'Cadastrar horário'}
             </button>
           </div>
         </form>
