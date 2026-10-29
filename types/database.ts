@@ -1,5 +1,6 @@
 export interface Configuracao {
   id: number;
+  turma_id: string | null;
   limite_alunos_min: number;
   limite_alunos_max: number;
   permitir_inscricoes: boolean;
@@ -10,6 +11,8 @@ export interface Configuracao {
 }
 
 export interface AlunoPermitido {
+  id: string;
+  turma_id: string;
   matricula: string;
   nome: string;
 }
@@ -18,6 +21,7 @@ export interface DataApresentacao {
   id: string;
   turma_id: string;
   data_hora: string;
+  data_hora_fim: string | null;
   vagas_totais: number;
   vagas_ocupadas: number;
 }
@@ -56,3 +60,42 @@ export type NovoAluno = Omit<Aluno, "id">;
 export type NovaData = Omit<DataApresentacao, "id">;
 export type NovaDisciplina = Omit<Disciplina, "id">;
 export type NovaTurma = Omit<Turma, "id">;
+export type NovoAlunoPermitido = Omit<AlunoPermitido, "id">;
+export type NovaConfiguracao = Omit<Configuracao, "id">;
+
+type TableDefinition<Row, Insert> = {
+  Row: Row & Record<string, unknown>;
+  Insert: Insert & Record<string, unknown>;
+  Update: Partial<Row> & Record<string, unknown>;
+  Relationships: [];
+};
+
+export interface Database {
+  public: {
+    Tables: {
+      disciplinas: TableDefinition<
+        Disciplina,
+        Omit<Disciplina, "id"> & { id?: string }
+      >;
+      turmas: TableDefinition<Turma, Omit<Turma, "id"> & { id?: string }>;
+      datas_apresentacao: TableDefinition<
+        DataApresentacao,
+        Omit<DataApresentacao, "id"> & { id?: string }
+      >;
+      grupos: TableDefinition<Grupo, Omit<Grupo, "id"> & { id?: string }>;
+      alunos: TableDefinition<Aluno, Omit<Aluno, "id"> & { id?: string }>;
+      alunos_permitidos: TableDefinition<
+        AlunoPermitido,
+        Omit<AlunoPermitido, "id"> & { id?: string }
+      >;
+      configuracoes: TableDefinition<
+        Configuracao,
+        Omit<Configuracao, "id"> & { id?: number }
+      >;
+    };
+    Views: Record<string, never>;
+    Functions: Record<string, never>;
+    Enums: Record<string, never>;
+    CompositeTypes: Record<string, never>;
+  };
+}

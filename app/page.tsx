@@ -31,8 +31,20 @@ import type {
 
 type LimitesInscricao = Pick<
   Configuracao,
-  "limite_alunos_min" | "limite_alunos_max" | "permitir_inscricoes"
+  | "limite_alunos_min"
+  | "limite_alunos_max"
+  | "permitir_inscricoes"
+  | "data_inicio_agendamento"
+  | "data_fim_agendamento"
 >;
+
+const limitesPadrao: LimitesInscricao = {
+  limite_alunos_min: 2,
+  limite_alunos_max: 5,
+  permitir_inscricoes: false,
+  data_inicio_agendamento: null,
+  data_fim_agendamento: null,
+};
 
 interface MembroFormulario {
   id: string;
@@ -71,8 +83,26 @@ function isLimitesInscricao(value: unknown): value is LimitesInscricao {
     typeof config.limite_alunos_max === "number" &&
     Number.isInteger(config.limite_alunos_max) &&
     config.limite_alunos_max >= config.limite_alunos_min &&
-    typeof config.permitir_inscricoes === "boolean"
+    typeof config.permitir_inscricoes === "boolean" &&
+    (typeof config.data_inicio_agendamento === "string" ||
+      config.data_inicio_agendamento === null) &&
+    (typeof config.data_fim_agendamento === "string" ||
+      config.data_fim_agendamento === null)
   );
+}
+
+function inscricoesEstaoAbertas(config: LimitesInscricao): boolean {
+  if (!config.permitir_inscricoes) return false
+
+  const agora = Date.now()
+  const inicio = config.data_inicio_agendamento
+    ? new Date(config.data_inicio_agendamento).getTime()
+    : null
+  const fim = config.data_fim_agendamento
+    ? new Date(config.data_fim_agendamento).getTime()
+    : null
+
+  return (inicio === null || agora >= inicio) && (fim === null || agora <= fim)
 }
 
 function isDataApresentacao(value: unknown): value is DataApresentacao {
@@ -85,6 +115,7 @@ function isDataApresentacao(value: unknown): value is DataApresentacao {
     typeof data.id === "string" &&
     typeof data.turma_id === "string" &&
     typeof data.data_hora === "string" &&
+    (typeof data.data_hora_fim === "string" || data.data_hora_fim === null) &&
     typeof data.vagas_totais === "number" &&
     typeof data.vagas_ocupadas === "number"
   );
@@ -136,6 +167,20 @@ function formatarData(dataHora: string): string {
   }).format(data);
 
   return `${dataFormatada} - ${horaFormatada}`;
+}
+
+function formatarHora(dataHora: string): string {
+  const data = new Date(dataHora);
+  if (Number.isNaN(data.getTime())) {
+    return dataHora;
+  }
+
+  return new Intl.DateTimeFormat("pt-BR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+    timeZone: "America/Sao_Paulo",
+  }).format(data);
 }
 
 function obterMensagemErro(error: unknown): string {
@@ -288,7 +333,10 @@ export default function Home() {
       membroVazio(`membro-${proximoMembroId.current++}`),
     [],
   );
-  const [limites, setLimites] = useState<LimitesInscricao | null>(null);
+  const [limites, setLimites] = useState<LimitesInscricao>(limitesPadrao);
+  const [limitesPorTurma, setLimitesPorTurma] = useState<
+    Map<string, LimitesInscricao>
+  >(() => new Map());
   const [datas, setDatas] = useState<DataApresentacao[]>([]);
   const [disciplinas, setDisciplinas] = useState<Disciplina[]>([]);
   const [turmas, setTurmas] = useState<Turma[]>([]);
@@ -316,7 +364,7 @@ export default function Home() {
 
       try {
         const [
-          configuracaoResult,
+          configuracoesResult,
           disciplinasResult,
           turmasResult,
           datasResult,
@@ -324,10 +372,8 @@ export default function Home() {
           supabase
             .from("configuracoes")
             .select(
-              "limite_alunos_min, limite_alunos_max, permitir_inscricoes",
-            )
-            .limit(1)
-            .maybeSingle(),
+              "turma_id, limite_alunos_min, limite_alunos_max, permitir_inscricoes, data_inicio_agendamento, data_fim_agendamento",
+            ),
           supabase
             .from("disciplinas")
             .select("id, nome")
@@ -338,13 +384,15 @@ export default function Home() {
             .order("nome_turma", { ascending: true }),
           supabase
             .from("datas_apresentacao")
-            .select("id, turma_id, data_hora, vagas_totais, vagas_ocupadas")
+            .select(
+              "id, turma_id, data_hora, data_hora_fim, vagas_totais, vagas_ocupadas",
+            )
             .order("data_hora", { ascending: true }),
         ]);
 
-        if (configuracaoResult.error) {
+        if (configuracoesResult.error) {
           throw new Error(
-            `Não foi possível carregar as configurações: ${configuracaoResult.error.message}`,
+            `Não foi possível carregar as configurações: ${configuracoesResult.error.message}`,
           );
         }
 
@@ -366,12 +414,6 @@ export default function Home() {
           );
         }
 
-        if (!isLimitesInscricao(configuracaoResult.data)) {
-          throw new Error(
-            "As configurações de quantidade de alunos estão ausentes ou inválidas.",
-          );
-        }
-
         const datasValidas = (datasResult.data ?? []).filter(
           isDataApresentacao,
         );
@@ -379,14 +421,31 @@ export default function Home() {
           isDisciplina,
         );
         const turmasValidas = (turmasResult.data ?? []).filter(isTurma);
+        const limitesValidos = new Map<string, LimitesInscricao>();
+
+        for (const configuracao of configuracoesResult.data ?? []) {
+          if (
+            typeof configuracao.turma_id === "string" &&
+            isLimitesInscricao(configuracao)
+          ) {
+            limitesValidos.set(configuracao.turma_id, {
+              limite_alunos_min: configuracao.limite_alunos_min,
+              limite_alunos_max: configuracao.limite_alunos_max,
+              permitir_inscricoes: configuracao.permitir_inscricoes,
+              data_inicio_agendamento: configuracao.data_inicio_agendamento,
+              data_fim_agendamento: configuracao.data_fim_agendamento,
+            });
+          }
+        }
 
         if (ativo) {
-          setLimites(configuracaoResult.data);
+          setLimites(limitesPadrao);
+          setLimitesPorTurma(limitesValidos);
           setDisciplinas(disciplinasValidas);
           setTurmas(turmasValidas);
           setMembros(
             Array.from(
-              { length: configuracaoResult.data.limite_alunos_min },
+              { length: limitesPadrao.limite_alunos_min },
               criarMembro,
             ),
           );
@@ -415,12 +474,12 @@ export default function Home() {
   }, [atualizacao, criarMembro]);
 
   const adicionarMembro = useCallback(() => {
-    if (!limites || membros.length >= limites.limite_alunos_max) {
+    if (membros.length >= limites.limite_alunos_max) {
       return;
     }
 
     setMembros((membrosAtuais) => [...membrosAtuais, criarMembro()]);
-  }, [criarMembro, limites, membros.length]);
+  }, [criarMembro, limites.limite_alunos_max, membros.length]);
 
   const datasDisponiveis = datas.filter(
     (data) =>
@@ -542,7 +601,7 @@ export default function Home() {
   }
 
   function removerMembro(indice: number): void {
-    if (!limites || membros.length <= limites.limite_alunos_min) {
+    if (membros.length <= limites.limite_alunos_min) {
       return;
     }
 
@@ -557,8 +616,10 @@ export default function Home() {
     event.preventDefault();
     setErroFormulario("");
 
-    if (!limites?.permitir_inscricoes) {
-      setErroFormulario("As inscrições estão encerradas no momento.");
+    if (!inscricoesEstaoAbertas(limites)) {
+      setErroFormulario(
+        "As inscrições para a turma selecionada estão fechadas ou fora do período permitido.",
+      );
       return;
     }
 
@@ -674,6 +735,13 @@ export default function Home() {
 
       setSucesso(true);
       setGrupo(formularioInicial);
+      setLimites(limitesPadrao);
+      setMembros(
+        Array.from(
+          { length: limitesPadrao.limite_alunos_min },
+          criarMembro,
+        ),
+      );
       setAtualizacao((valor) => valor + 1);
     } catch (error: unknown) {
       const mensagensRollback: string[] = [];
@@ -747,25 +815,6 @@ export default function Home() {
     );
   }
 
-  if (!limites?.permitir_inscricoes) {
-    return (
-      <main className="flex min-h-screen items-center justify-center bg-slate-50 px-4 py-12">
-        <section className="w-full max-w-xl rounded-2xl border border-amber-200 bg-white p-8 text-center shadow-sm sm:p-10">
-          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-amber-100 text-amber-800">
-            <CalendarDays className="h-7 w-7" />
-          </div>
-          <h1 className="mt-5 text-2xl font-bold tracking-tight text-slate-900">
-            Inscrições encerradas
-          </h1>
-          <p className="mt-3 leading-7 text-slate-600">
-            As inscrições de grupos não estão abertas no momento. Consulte seu
-            professor para mais informações.
-          </p>
-        </section>
-      </main>
-    );
-  }
-
   return (
     <main className="min-h-screen bg-slate-50 px-4 py-10 sm:px-6 sm:py-14">
       <div className="mx-auto max-w-3xl">
@@ -831,15 +880,11 @@ export default function Home() {
                   className="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-3 text-slate-900 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
                   onChange={(event) => {
                     turmaIdAtualRef.current = "";
-                    setMembros((atuais) =>
-                      atuais.map((membro) =>
-                        membro.nomeEncontradoNaTurmaId
-                          ? {
-                              ...membro,
-                              nome: "",
-                              nomeEncontradoNaTurmaId: null,
-                            }
-                          : membro,
+                    setLimites(limitesPadrao);
+                    setMembros(
+                      Array.from(
+                        { length: limitesPadrao.limite_alunos_min },
+                        criarMembro,
                       ),
                     );
                     setGrupo({
@@ -869,17 +914,24 @@ export default function Home() {
                   className="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-3 text-slate-900 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15 disabled:cursor-not-allowed disabled:bg-slate-100"
                   disabled={!grupo.disciplina_id}
                   onChange={(event) => {
-                    turmaIdAtualRef.current = event.target.value;
-                    setMembros((atuais) =>
-                      atuais.map((membro) =>
-                        membro.nomeEncontradoNaTurmaId
-                          ? {
-                              ...membro,
-                              nome: "",
-                              nomeEncontradoNaTurmaId: null,
-                            }
-                          : membro,
+                    const turmaId = event.target.value;
+                    const limitesDaTurma =
+                      limitesPorTurma.get(turmaId) ?? {
+                        ...limitesPadrao,
+                        permitir_inscricoes: false,
+                      };
+                    turmaIdAtualRef.current = turmaId;
+                    setLimites(limitesDaTurma);
+                    setMembros(
+                      Array.from(
+                        { length: limitesDaTurma.limite_alunos_min },
+                        criarMembro,
                       ),
+                    );
+                    setErroFormulario(
+                      limitesPorTurma.has(turmaId)
+                        ? ""
+                        : "As configurações desta turma não foram encontradas. Avise o professor.",
                     );
                     setGrupo({
                       ...grupo,
@@ -947,7 +999,11 @@ export default function Home() {
                   </option>
                   {datasDisponiveis.map((data) => (
                     <option key={data.id} value={data.id}>
-                      {formatarData(data.data_hora)} (
+                      {formatarData(data.data_hora)}
+                      {data.data_hora_fim
+                        ? ` - ${formatarHora(data.data_hora_fim)}`
+                        : ""}{" "}
+                      (
                       {data.vagas_totais - data.vagas_ocupadas}{" "}
                       {data.vagas_totais - data.vagas_ocupadas === 1
                         ? "vaga restante"
@@ -1110,6 +1166,19 @@ export default function Home() {
             </div>
           )}
 
+          {grupo.turma_id && !inscricoesEstaoAbertas(limites) && (
+            <div
+              className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3.5 text-sm text-amber-900"
+              role="status"
+            >
+              <CalendarDays className="mt-0.5 h-5 w-5 shrink-0" />
+              <p>
+                As inscrições desta turma estão fechadas ou fora do período
+                definido pelo professor.
+              </p>
+            </div>
+          )}
+
           <div className="flex flex-col-reverse items-stretch justify-between gap-3 sm:flex-row sm:items-center">
             <p className="text-center text-xs text-slate-500 sm:text-left">
               <span className="text-red-600">*</span> Campos obrigatórios
@@ -1118,6 +1187,7 @@ export default function Home() {
               className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-emerald-700 px-6 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-emerald-800 focus:outline-none focus:ring-4 focus:ring-emerald-700/20 disabled:cursor-not-allowed disabled:bg-slate-400"
               disabled={
                 carregandoEnvio ||
+                !inscricoesEstaoAbertas(limites) ||
                 datasDisponiveis.length === 0 ||
                 !grupo.data_apresentacao_id
               }

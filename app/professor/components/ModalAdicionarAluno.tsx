@@ -1,40 +1,54 @@
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState, type FormEvent } from 'react'
 import { UserPlus, X } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
+import type { Database } from '@/types/database'
 
 interface Props {
   isOpen: boolean
+  turmaId: string
   onClose: () => void
-  onSuccess: () => void
+  onSuccess: () => Promise<void>
 }
 
-export default function ModalAdicionarAluno({ isOpen, onClose, onSuccess }: Props) {
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'Ocorreu um erro inesperado.'
+}
+
+export default function ModalAdicionarAluno({ isOpen, turmaId, onClose, onSuccess }: Props) {
   const [matricula, setMatricula] = useState('')
   const [nome, setNome] = useState('')
   const [loading, setLoading] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
 
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  const supabase = useMemo(
+    () =>
+      createBrowserClient<Database>(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+      ),
+    []
   )
 
   if (!isOpen) return null
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
-    if (!matricula || !nome) return
+    const matriculaNormalizada = matricula.trim()
+    const nomeNormalizado = nome.trim()
+    if (!matriculaNormalizada || !nomeNormalizado) {
+      setErro('Informe matrícula e nome.')
+      return
+    }
 
     try {
       setLoading(true)
       setErro(null)
 
-      // Insere o aluno na tabela do Supabase (ajuste o nome da tabela se necessário, ex: 'alunos')
       const { error } = await supabase
         .from('alunos_permitidos')
-        .insert([{ matricula: matricula.trim(), nome: nome.trim() }])
+        .insert([{ turma_id: turmaId, matricula: matriculaNormalizada, nome: nomeNormalizado }])
 
       if (error) {
         throw error
@@ -42,10 +56,11 @@ export default function ModalAdicionarAluno({ isOpen, onClose, onSuccess }: Prop
 
       setMatricula('')
       setNome('')
-      onSuccess()
+      await onSuccess()
       onClose()
-    } catch (err: any) {
-      setErro(err.message || 'Erro ao cadastrar aluno. Verifique se a matrícula já existe.')
+    } catch (err) {
+      console.error('Erro ao cadastrar aluno:', err)
+      setErro(getErrorMessage(err))
     } finally {
       setLoading(false)
     }
@@ -109,7 +124,7 @@ export default function ModalAdicionarAluno({ isOpen, onClose, onSuccess }: Prop
             </button>
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || !turmaId}
               className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg shadow-sm transition disabled:opacity-50"
             >
               {loading ? 'Salvando...' : 'Adicionar Aluno'}

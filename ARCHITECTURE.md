@@ -38,7 +38,8 @@ O banco de dados segue um modelo relacional normalizado para suportar múltiplas
 3. **`datas_apresentacao`**: Agenda de bancas/apresentações disponíveis por turma.
    - `id` (UUID, PK)
    - `turma_id` (UUID, FK -> `turmas.id`)
-   - `data_hora` (TIMESTAMP WITH TIME ZONE)
+   - `data_hora` (TIMESTAMP WITH TIME ZONE, início do slot)
+   - `data_hora_fim` (TIMESTAMP WITH TIME ZONE, término do slot)
    - `vagas_totais` (INT)
    - `vagas_ocupadas` (INT)
 
@@ -66,11 +67,15 @@ O banco de dados segue um modelo relacional normalizado para suportar múltiplas
    - `nome` (VARCHAR)
    - *Constraint Unique:* `(turma_id, matricula)`
 
-7. **`configuracoes`**: Parâmetros globais do sistema.
+7. **`configuracoes`**: Parâmetros do sistema por turma.
    - `id` (SERIAL, PK)
+   - `turma_id` (UUID, FK -> `turmas.id`, único; `NULL` em registros globais antigos)
    - `limite_alunos_min` (INT, default 2)
    - `limite_alunos_max` (INT, default 5)
    - `permitir_inscricoes` (BOOLEAN)
+   - `limite_alunos_grupo` (INT, default 5)
+   - `data_inicio_agendamento` / `data_fim_agendamento` (TIMESTAMP WITH TIME ZONE)
+   - `mostrar_Integrantes` (BOOLEAN, default true)
 
 ---
 
@@ -96,9 +101,10 @@ A função encapsula a seguinte sequência transacional (`BEGIN ... COMMIT`):
 
 ### 4.2. Fluxo do Painel do Professor (`/professor`)
 1. **Gestão de Disciplinas e Turmas:** Cadastro centralizado de disciplinas e vinculação de uma ou mais turmas.
-2. **Gestão de Datas e Vagas:** Definição de datas/horários por turma e alteração de `vagas_totais` para datas existentes (com validação para não permitir valores menores que `vagas_ocupadas`).
-3. **Importação de Alunos via CSV:** Upload de arquivos no formato `matricula,nome` por turma para inserção/upsert na tabela `alunos_permitidos`.
-4. **CRUD Completo de Grupos:**
+2. **Gestão de Datas e Vagas:** Definição de slots com início, término e vagas por turma; ocupação e disponibilidade são atualizadas via Supabase Realtime.
+3. **Importação de Alunos via CSV:** Upload de arquivos com cabeçalho `matricula,nome` por turma para upsert na tabela `alunos_permitidos`.
+4. **Configurações por Turma:** Limite de alunos, janela de agendamento e visibilidade dos integrantes persistidos por `turma_id`.
+5. **CRUD Completo de Grupos:**
    - Visualização expandida de membros.
    - Edição completa do grupo, integrantes e troca de data via RPC atômica.
    - Exclusão de grupo com devolução automática da vaga ocupada.
