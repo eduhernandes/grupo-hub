@@ -28,7 +28,7 @@ export default function PainelProfessor() {
   const carregarAlunos = async () => {
     try {
       setLoadingAlunos(true)
-      const { data, error } = await supabase.from('alunos').select('*').order('nome')
+      const { data, error } = await supabase.from('alunos_permitidos').select('*').order('nome')
       if (error) throw error
       if (data) setAlunos(data)
     } catch (err) {
@@ -47,7 +47,7 @@ export default function PainelProfessor() {
     if (!confirm('Deseja realmente remover este aluno?')) return
 
     try {
-      const { error } = await supabase.from('alunos').delete().eq('matricula', matricula)
+      const { error } = await supabase.from('alunos_permitidos').delete().eq('matricula', matricula)
       if (error) throw error
       carregarAlunos()
     } catch (err) {

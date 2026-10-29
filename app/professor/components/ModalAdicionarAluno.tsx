@@ -33,7 +33,7 @@ export default function ModalAdicionarAluno({ isOpen, onClose, onSuccess }: Prop
 
       // Insere o aluno na tabela do Supabase (ajuste o nome da tabela se necessário, ex: 'alunos')
       const { error } = await supabase
-        .from('alunos')
+        .from('alunos_permitidos')
         .insert([{ matricula: matricula.trim(), nome: nome.trim() }])
 
       if (error) {
