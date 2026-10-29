@@ -3,6 +3,15 @@ export interface Configuracao {
   limite_alunos_min: number;
   limite_alunos_max: number;
   permitir_inscricoes: boolean;
+  limite_alunos_grupo: number;
+  data_inicio_agendamento: string | null;
+  data_fim_agendamento: string | null;
+  mostrar_Integrantes: boolean;
+}
+
+export interface AlunoPermitido {
+  matricula: string;
+  nome: string;
 }
 
 export interface DataApresentacao {
