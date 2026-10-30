@@ -79,6 +79,8 @@ O banco de dados PostgreSQL roda no Supabase. Certifique-se de executar as migra
 - `alunos_permitidos`
 - `configuracoes`
 
+Para habilitar a escolha de temas, execute também `supabase/migrations/20261030090000_temas_turma.sql` no SQL Editor do projeto Supabase antes de publicar a aplicação.
+
 Além disso, o sistema utiliza a função atômica PostgreSQL `atualizar_grupo_completo` para garantir a consistência das vagas durante edições de grupos no painel do professor.
 
 ---

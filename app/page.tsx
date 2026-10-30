@@ -402,6 +402,15 @@ export default function Home() {
         ]);
 
         if (configuracoesResult.error) {
+          if (
+            configuracoesResult.error.code === "42703" &&
+            configuracoesResult.error.message.includes("tipo_tema")
+          ) {
+            throw new Error(
+              "O banco do Supabase ainda não foi atualizado para a escolha de temas. No SQL Editor do projeto, execute a migração supabase/migrations/20261030090000_temas_turma.sql e recarregue esta página.",
+            );
+          }
+
           throw new Error(
             `Não foi possível carregar as configurações: ${configuracoesResult.error.message}`,
           );
