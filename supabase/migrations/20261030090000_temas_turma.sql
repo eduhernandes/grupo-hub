@@ -132,11 +132,23 @@ SET search_path = public, pg_temp
 AS $$
 DECLARE
   v_tipo_tema text;
+  v_disciplina text;
   v_tema public.temas_turma%ROWTYPE;
   v_grupos_ocupados integer;
   v_tema_projeto text;
   v_grupo_id uuid;
 BEGIN
+  SELECT disciplina.nome
+  INTO v_disciplina
+  FROM public.turmas AS turma
+  JOIN public.disciplinas AS disciplina
+    ON disciplina.id = turma.disciplina_id
+  WHERE turma.id = p_turma_id;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'A turma ou disciplina selecionada não foi encontrada.';
+  END IF;
+
   SELECT configuracao.tipo_tema
   INTO v_tipo_tema
   FROM public.configuracoes AS configuracao
@@ -186,6 +198,7 @@ BEGIN
 
   INSERT INTO public.grupos (
     nome_grupo,
+    disciplina,
     turma_id,
     tema_projeto,
     tema_turma_id,
@@ -194,6 +207,7 @@ BEGIN
   )
   VALUES (
     btrim(p_nome_grupo),
+    v_disciplina,
     p_turma_id,
     v_tema_projeto,
     p_tema_turma_id,

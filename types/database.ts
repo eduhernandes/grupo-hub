@@ -51,6 +51,7 @@ export interface Turma {
 export interface Grupo {
   id: string;
   nome_grupo: string;
+  disciplina: string;
   turma_id: string;
   tema_projeto: string;
   tema_turma_id: string | null;
