@@ -25,7 +25,7 @@ import type {
   DataApresentacao,
   Disciplina,
   NovoAluno,
-  NovoGrupo,
+  TemaTurma,
   Turma,
 } from "@/types/database";
 
@@ -34,6 +34,7 @@ type LimitesInscricao = Pick<
   | "limite_alunos_min"
   | "limite_alunos_max"
   | "permitir_inscricoes"
+  | "tipo_tema"
   | "data_inicio_agendamento"
   | "data_fim_agendamento"
 >;
@@ -42,6 +43,7 @@ const limitesPadrao: LimitesInscricao = {
   limite_alunos_min: 2,
   limite_alunos_max: 5,
   permitir_inscricoes: false,
+  tipo_tema: "livre",
   data_inicio_agendamento: null,
   data_fim_agendamento: null,
 };
@@ -59,7 +61,12 @@ interface GrupoFormulario {
   disciplina_id: string;
   turma_id: string;
   tema_projeto: string;
+  tema_turma_id: string;
   data_apresentacao_id: string;
+}
+
+interface TemaComDisponibilidade extends TemaTurma {
+  grupos_ocupados: number;
 }
 
 const formularioInicial: GrupoFormulario = {
@@ -67,6 +74,7 @@ const formularioInicial: GrupoFormulario = {
   disciplina_id: "",
   turma_id: "",
   tema_projeto: "",
+  tema_turma_id: "",
   data_apresentacao_id: "",
 };
 
@@ -84,6 +92,7 @@ function isLimitesInscricao(value: unknown): value is LimitesInscricao {
     Number.isInteger(config.limite_alunos_max) &&
     config.limite_alunos_max >= config.limite_alunos_min &&
     typeof config.permitir_inscricoes === "boolean" &&
+    (config.tipo_tema === "livre" || config.tipo_tema === "pre_definido") &&
     (typeof config.data_inicio_agendamento === "string" ||
       config.data_inicio_agendamento === null) &&
     (typeof config.data_fim_agendamento === "string" ||
@@ -338,6 +347,8 @@ export default function Home() {
     Map<string, LimitesInscricao>
   >(() => new Map());
   const [datas, setDatas] = useState<DataApresentacao[]>([]);
+  const [temasTurma, setTemasTurma] = useState<TemaComDisponibilidade[]>([]);
+  const [carregandoTemas, setCarregandoTemas] = useState(false);
   const [disciplinas, setDisciplinas] = useState<Disciplina[]>([]);
   const [turmas, setTurmas] = useState<Turma[]>([]);
   const [grupo, setGrupo] = useState<GrupoFormulario>(formularioInicial);
@@ -372,7 +383,7 @@ export default function Home() {
           supabase
             .from("configuracoes")
             .select(
-              "turma_id, limite_alunos_min, limite_alunos_max, permitir_inscricoes, data_inicio_agendamento, data_fim_agendamento",
+              "turma_id, limite_alunos_min, limite_alunos_max, permitir_inscricoes, tipo_tema, data_inicio_agendamento, data_fim_agendamento",
             ),
           supabase
             .from("disciplinas")
@@ -432,6 +443,7 @@ export default function Home() {
               limite_alunos_min: configuracao.limite_alunos_min,
               limite_alunos_max: configuracao.limite_alunos_max,
               permitir_inscricoes: configuracao.permitir_inscricoes,
+              tipo_tema: configuracao.tipo_tema,
               data_inicio_agendamento: configuracao.data_inicio_agendamento,
               data_fim_agendamento: configuracao.data_fim_agendamento,
             });
@@ -473,6 +485,44 @@ export default function Home() {
     };
   }, [atualizacao, criarMembro]);
 
+  useEffect(() => {
+    let ativo = true;
+
+    if (!grupo.turma_id || limites.tipo_tema !== "pre_definido") {
+      return;
+    }
+
+    async function carregarTemas(): Promise<void> {
+      setCarregandoTemas(true);
+      setErroFormulario("");
+
+      try {
+        const { data: temas, error } = await supabase.rpc("listar_temas_turma", {
+          p_turma_id: grupo.turma_id,
+        });
+        if (error) {
+          throw new Error(`Não foi possível carregar os temas: ${error.message}`);
+        }
+
+        if (ativo) {
+          setTemasTurma(temas ?? []);
+        }
+      } catch (error: unknown) {
+        if (ativo) {
+          setErroFormulario(obterMensagemErro(error));
+        }
+      } finally {
+        if (ativo) setCarregandoTemas(false);
+      }
+    }
+
+    void carregarTemas();
+
+    return () => {
+      ativo = false;
+    };
+  }, [grupo.turma_id, limites.tipo_tema]);
+
   const adicionarMembro = useCallback(() => {
     if (membros.length >= limites.limite_alunos_max) {
       return;
@@ -489,6 +539,9 @@ export default function Home() {
   );
   const turmasDisponiveis = turmas.filter(
     (turma) => turma.disciplina_id === grupo.disciplina_id,
+  );
+  const temasDisponiveisTurma = temasTurma.filter(
+    (tema) => tema.turma_id === grupo.turma_id,
   );
 
   function atualizarMembro(
@@ -637,10 +690,27 @@ export default function Home() {
       !grupo.nome_grupo.trim() ||
       !grupo.disciplina_id ||
       !grupo.turma_id ||
-      !grupo.tema_projeto.trim() ||
       !grupo.data_apresentacao_id
     ) {
       setErroFormulario("Preencha todos os campos obrigatórios do grupo.");
+      return;
+    }
+
+    const temaSelecionado =
+      limites.tipo_tema === "pre_definido"
+        ? temasDisponiveisTurma.find((tema) => tema.id === grupo.tema_turma_id)
+        : null;
+    if (
+      limites.tipo_tema === "pre_definido"
+        ? !temaSelecionado ||
+          temaSelecionado.grupos_ocupados >= temaSelecionado.limite_grupos
+        : !grupo.tema_projeto.trim()
+    ) {
+      setErroFormulario(
+        limites.tipo_tema === "pre_definido"
+          ? "Selecione um tema que ainda tenha vagas disponíveis."
+          : "Informe o tema do projeto.",
+      );
       return;
     }
 
@@ -694,31 +764,28 @@ export default function Home() {
         return;
       }
 
-      const novoGrupo: NovoGrupo = {
-        nome_grupo: grupo.nome_grupo.trim(),
-        turma_id: turmaSelecionada.id,
-        tema_projeto: grupo.tema_projeto.trim(),
-        link_repositorio: null,
-        data_apresentacao_id: grupo.data_apresentacao_id,
-      };
-
-      const { data: grupoInserido, error: erroGrupo } = await supabase
-        .from("grupos")
-        .insert(novoGrupo)
-        .select("id")
-        .single();
-
+      const { data: grupoInseridoId, error: erroGrupo } = await supabase.rpc(
+        "criar_grupo_inscricao",
+        {
+          p_turma_id: turmaSelecionada.id,
+          p_nome_grupo: grupo.nome_grupo.trim(),
+          p_tema_projeto: grupo.tema_projeto.trim(),
+          p_tema_turma_id: grupo.tema_turma_id || null,
+          p_data_apresentacao_id: grupo.data_apresentacao_id,
+          p_link_repositorio: null,
+        },
+      );
       if (erroGrupo) {
         throw new Error(`Não foi possível cadastrar o grupo: ${erroGrupo.message}`);
       }
 
-      if (!grupoInserido || typeof grupoInserido.id !== "string") {
+      if (typeof grupoInseridoId !== "string") {
         throw new Error("O cadastro do grupo não retornou um identificador válido.");
       }
 
-      grupoId = grupoInserido.id;
+      grupoId = grupoInseridoId;
       const novosAlunos: NovoAluno[] = membros.map((membro, indice) => ({
-        grupo_id: grupoInserido.id,
+        grupo_id: grupoInseridoId,
         nome: membro.nome.trim(),
         matricula: membro.matricula.trim(),
         email: membro.email.trim() || null,
@@ -891,6 +958,8 @@ export default function Home() {
                       ...grupo,
                       disciplina_id: event.target.value,
                       turma_id: "",
+                      tema_projeto: "",
+                      tema_turma_id: "",
                       data_apresentacao_id: "",
                     });
                   }}
@@ -936,6 +1005,8 @@ export default function Home() {
                     setGrupo({
                       ...grupo,
                       turma_id: event.target.value,
+                      tema_projeto: "",
+                      tema_turma_id: "",
                       data_apresentacao_id: "",
                     });
                   }}
@@ -961,16 +1032,65 @@ export default function Home() {
                 <span className="text-sm font-semibold text-slate-700">
                   Tema do projeto <span className="text-red-600">*</span>
                 </span>
-                <textarea
-                  className="min-h-28 w-full resize-y rounded-lg border border-slate-300 px-3.5 py-3 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
-                  maxLength={500}
-                  onChange={(event) =>
-                    setGrupo({ ...grupo, tema_projeto: event.target.value })
-                  }
-                  placeholder="Descreva brevemente o tema do projeto"
-                  required
-                  value={grupo.tema_projeto}
-                />
+                {limites.tipo_tema === "pre_definido" ? (
+                  <>
+                    <select
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-3 text-slate-900 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15 disabled:cursor-not-allowed disabled:bg-slate-100"
+                      disabled={!grupo.turma_id || carregandoTemas}
+                      onChange={(event) => {
+                        const tema = temasTurma.find(
+                          (opcao) => opcao.id === event.target.value,
+                        );
+                        setGrupo({
+                          ...grupo,
+                          tema_turma_id: tema?.id ?? "",
+                          tema_projeto: tema?.titulo ?? "",
+                        });
+                      }}
+                      required
+                      value={grupo.tema_turma_id}
+                    >
+                      <option value="">
+                        {carregandoTemas
+                          ? "Carregando temas..."
+                          : temasDisponiveisTurma.length > 0
+                            ? "Selecione um tema"
+                            : "Nenhum tema cadastrado para esta turma"}
+                      </option>
+                      {temasDisponiveisTurma.map((tema) => {
+                        const esgotado = tema.grupos_ocupados >= tema.limite_grupos;
+                        const vagasRestantes = Math.max(
+                          0,
+                          tema.limite_grupos - tema.grupos_ocupados,
+                        );
+                        return (
+                          <option disabled={esgotado} key={tema.id} value={tema.id}>
+                            {tema.titulo}
+                            {esgotado
+                              ? " (Esgotado)"
+                              : ` (${vagasRestantes} vaga(s) para grupo)`}
+                          </option>
+                        );
+                      })}
+                    </select>
+                    <span className="block text-xs text-slate-500">
+                      {temasDisponiveisTurma.length === 0 && !carregandoTemas
+                        ? "Avise o professor para cadastrar temas nesta turma."
+                        : "A disponibilidade é confirmada novamente ao enviar a inscrição."}
+                    </span>
+                  </>
+                ) : (
+                  <textarea
+                    className="min-h-28 w-full resize-y rounded-lg border border-slate-300 px-3.5 py-3 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
+                    maxLength={500}
+                    onChange={(event) =>
+                      setGrupo({ ...grupo, tema_projeto: event.target.value })
+                    }
+                    placeholder="Descreva brevemente o tema do projeto"
+                    required
+                    value={grupo.tema_projeto}
+                  />
+                )}
               </label>
 
               <label className="space-y-2 sm:col-span-2">

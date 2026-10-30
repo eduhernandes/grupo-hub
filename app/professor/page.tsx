@@ -29,6 +29,7 @@ import type {
   Disciplina,
   Database,
   Grupo,
+  TemaTurma,
   Turma,
 } from '@/types/database'
 
@@ -42,6 +43,7 @@ type ConfiguracaoForm = Omit<
     | 'data_fim_agendamento'
     | 'mostrar_Integrantes'
     | 'permitir_inscricoes'
+    | 'tipo_tema'
   >,
   'data_inicio_agendamento' | 'data_fim_agendamento'
 > & {
@@ -57,6 +59,7 @@ interface DadosTurma {
   alunos: AlunoPermitido[]
   datas: DataApresentacao[]
   grupos: GrupoComAlunos[]
+  temas: TemaTurma[]
   configuracao: ConfiguracaoForm
 }
 
@@ -67,6 +70,7 @@ const configuracaoPadrao: ConfiguracaoForm = {
   data_fim_agendamento: '',
   mostrar_Integrantes: true,
   permitir_inscricoes: false,
+  tipo_tema: 'livre',
 }
 
 function getErrorMessage(error: unknown): string {
@@ -118,6 +122,7 @@ function mapearConfiguracao(data: Configuracao | null): ConfiguracaoForm {
     data_fim_agendamento: toDatetimeLocal(data.data_fim_agendamento),
     mostrar_Integrantes: data.mostrar_Integrantes ?? true,
     permitir_inscricoes: data.permitir_inscricoes ?? false,
+    tipo_tema: data.tipo_tema ?? 'livre',
   }
 }
 
@@ -127,12 +132,14 @@ function aplicarDadosTurma(
     setAlunos: (value: AlunoPermitido[]) => void
     setDatas: (value: DataApresentacao[]) => void
     setGrupos: (value: GrupoComAlunos[]) => void
+    setTemas: (value: TemaTurma[]) => void
     setConfig: (value: ConfiguracaoForm) => void
   }
 ): void {
   setters.setAlunos(dados.alunos)
   setters.setDatas(dados.datas)
   setters.setGrupos(dados.grupos)
+  setters.setTemas(dados.temas)
   setters.setConfig(dados.configuracao)
 }
 
@@ -168,6 +175,12 @@ export default function PainelProfessor() {
   const [realtimeStatus, setRealtimeStatus] = useState<'connecting' | 'connected' | 'offline'>('connecting')
 
   const [config, setConfig] = useState<ConfiguracaoForm>(configuracaoPadrao)
+  const [temas, setTemas] = useState<TemaTurma[]>([])
+  const [novoTemaTitulo, setNovoTemaTitulo] = useState('')
+  const [novoTemaLimite, setNovoTemaLimite] = useState(1)
+  const [salvandoTema, setSalvandoTema] = useState(false)
+  const [temaAtualizandoId, setTemaAtualizandoId] = useState<string | null>(null)
+  const [temaRemovendoId, setTemaRemovendoId] = useState<string | null>(null)
   const [loadingConfig, setLoadingConfig] = useState(true)
   const [savingConfig, setSavingConfig] = useState(false)
   const [mensagemConfig, setMensagemConfig] = useState<string | null>(null)
@@ -199,7 +212,7 @@ export default function PainelProfessor() {
 
   const buscarDadosTurma = useCallback(
     async (id: string): Promise<DadosTurma> => {
-      const [alunosResult, datasResult, gruposResult, configResult] = await Promise.all([
+      const [alunosResult, datasResult, gruposResult, configResult, temasResult] = await Promise.all([
         supabase
           .from('alunos_permitidos')
           .select('id, turma_id, matricula, nome')
@@ -212,16 +225,22 @@ export default function PainelProfessor() {
           .order('data_hora'),
         supabase
           .from('grupos')
-          .select('id, nome_grupo, turma_id, tema_projeto, link_repositorio, data_apresentacao_id')
+          .select('id, nome_grupo, turma_id, tema_projeto, tema_turma_id, link_repositorio, data_apresentacao_id')
           .eq('turma_id', id)
           .order('nome_grupo'),
         supabase.from('configuracoes').select('*').eq('turma_id', id).maybeSingle(),
+        supabase
+          .from('temas_turma')
+          .select('id, turma_id, titulo, limite_grupos, created_at')
+          .eq('turma_id', id)
+          .order('created_at'),
       ])
 
       if (alunosResult.error) throw alunosResult.error
       if (datasResult.error) throw datasResult.error
       if (gruposResult.error) throw gruposResult.error
       if (configResult.error) throw configResult.error
+      if (temasResult.error) throw temasResult.error
 
       const groups = gruposResult.data ?? []
       let integrantes: Aluno[] = []
@@ -243,6 +262,7 @@ export default function PainelProfessor() {
           ...group,
           alunos: integrantes.filter((aluno) => aluno.grupo_id === group.id),
         })),
+        temas: temasResult.data ?? [],
         configuracao: mapearConfiguracao(configResult.data),
       }
     },
@@ -288,7 +308,7 @@ export default function PainelProfessor() {
     void buscarDadosTurma(turmaId)
       .then((dados) => {
         if (!active) return
-        aplicarDadosTurma(dados, { setAlunos, setDatas, setGrupos, setConfig })
+        aplicarDadosTurma(dados, { setAlunos, setDatas, setGrupos, setTemas, setConfig })
         setErroTurma(null)
         setErroAcao(null)
       })
@@ -320,7 +340,7 @@ export default function PainelProfessor() {
         () => {
           void buscarDadosTurma(turmaId)
             .then((dados) => {
-              if (active) aplicarDadosTurma(dados, { setAlunos, setDatas, setGrupos, setConfig })
+              if (active) aplicarDadosTurma(dados, { setAlunos, setDatas, setGrupos, setTemas, setConfig })
             })
             .catch((error: unknown) => {
               console.error('Erro ao atualizar slots em tempo real:', error)
@@ -334,7 +354,7 @@ export default function PainelProfessor() {
         () => {
           void buscarDadosTurma(turmaId)
             .then((dados) => {
-              if (active) aplicarDadosTurma(dados, { setAlunos, setDatas, setGrupos, setConfig })
+              if (active) aplicarDadosTurma(dados, { setAlunos, setDatas, setGrupos, setTemas, setConfig })
             })
             .catch((error: unknown) => {
               console.error('Erro ao atualizar grupos em tempo real:', error)
@@ -360,7 +380,7 @@ export default function PainelProfessor() {
 
     try {
       const dados = await buscarDadosTurma(turmaId)
-      aplicarDadosTurma(dados, { setAlunos, setDatas, setGrupos, setConfig })
+      aplicarDadosTurma(dados, { setAlunos, setDatas, setGrupos, setTemas, setConfig })
       setErroTurma(null)
     } catch (error) {
       console.error('Erro ao atualizar dados da turma:', error)
@@ -381,6 +401,7 @@ export default function PainelProfessor() {
     setAlunos([])
     setDatas([])
     setGrupos([])
+    setTemas([])
     setConfig(configuracaoPadrao)
   }
 
@@ -394,6 +415,7 @@ export default function PainelProfessor() {
     setAlunos([])
     setDatas([])
     setGrupos([])
+    setTemas([])
     setConfig(configuracaoPadrao)
   }
 
@@ -522,6 +544,87 @@ export default function PainelProfessor() {
     }
   }
 
+  const handleAdicionarTema = async () => {
+    const titulo = novoTemaTitulo.trim()
+    if (!turmaId || !titulo || !Number.isInteger(novoTemaLimite) || novoTemaLimite < 1) {
+      setErroAcao('Informe um título e um limite de grupos válido para o tema.')
+      return
+    }
+
+    try {
+      setSalvandoTema(true)
+      setErroAcao(null)
+      const { data, error } = await supabase
+        .from('temas_turma')
+        .insert({ turma_id: turmaId, titulo, limite_grupos: novoTemaLimite })
+        .select('id, turma_id, titulo, limite_grupos, created_at')
+        .single()
+
+      if (error) throw error
+      setTemas((atuais) => [...atuais, data])
+      setNovoTemaTitulo('')
+      setNovoTemaLimite(1)
+    } catch (error) {
+      console.error('Erro ao adicionar tema da turma:', error)
+      setErroAcao(`Não foi possível adicionar o tema: ${getErrorMessage(error)}`)
+    } finally {
+      setSalvandoTema(false)
+    }
+  }
+
+  const handleAtualizarTema = async (tema: TemaTurma) => {
+    const titulo = tema.titulo.trim()
+    if (!titulo || !Number.isInteger(tema.limite_grupos) || tema.limite_grupos < 1) {
+      setErroAcao('Informe um título e um limite de grupos válido para o tema.')
+      return
+    }
+
+    try {
+      setTemaAtualizandoId(tema.id)
+      setErroAcao(null)
+      const { data, error } = await supabase
+        .from('temas_turma')
+        .update({ titulo, limite_grupos: tema.limite_grupos })
+        .eq('id', tema.id)
+        .eq('turma_id', turmaId)
+        .select('id, turma_id, titulo, limite_grupos, created_at')
+        .single()
+
+      if (error) throw error
+      setTemas((atuais) => atuais.map((atual) => atual.id === tema.id ? data : atual))
+    } catch (error) {
+      console.error('Erro ao atualizar tema da turma:', error)
+      setErroAcao(`Não foi possível atualizar o tema: ${getErrorMessage(error)}`)
+    } finally {
+      setTemaAtualizandoId(null)
+    }
+  }
+
+  const handleExcluirTema = async (tema: TemaTurma) => {
+    if (grupos.some((grupo) => grupo.tema_turma_id === tema.id)) {
+      setErroAcao('Não é possível remover um tema que já foi escolhido por um grupo.')
+      return
+    }
+
+    try {
+      setTemaRemovendoId(tema.id)
+      setErroAcao(null)
+      const { error } = await supabase
+        .from('temas_turma')
+        .delete()
+        .eq('id', tema.id)
+        .eq('turma_id', turmaId)
+
+      if (error) throw error
+      setTemas((atuais) => atuais.filter((atual) => atual.id !== tema.id))
+    } catch (error) {
+      console.error('Erro ao remover tema da turma:', error)
+      setErroAcao(`Não foi possível remover o tema: ${getErrorMessage(error)}`)
+    } finally {
+      setTemaRemovendoId(null)
+    }
+  }
+
   const handleSalvarConfiguracoes = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (!turmaId) return
@@ -551,6 +654,7 @@ export default function PainelProfessor() {
             limite_alunos_max: config.limite_alunos_grupo,
             limite_alunos_grupo: config.limite_alunos_grupo,
             permitir_inscricoes: config.permitir_inscricoes,
+            tipo_tema: config.tipo_tema,
             data_inicio_agendamento: config.data_inicio_agendamento
               ? new Date(config.data_inicio_agendamento).toISOString()
               : null,
@@ -953,6 +1057,134 @@ export default function PainelProfessor() {
                   <p className="text-sm text-slate-500" role="status">Carregando configurações...</p>
                 ) : (
                   <form className="space-y-5" onSubmit={(event) => void handleSalvarConfiguracoes(event)}>
+                    <fieldset className="space-y-3">
+                      <legend className="text-sm font-semibold text-slate-700">Escolha do tema</legend>
+                      <label className="flex items-start gap-3 rounded-lg border border-slate-200 p-4 text-sm text-slate-700">
+                        <input
+                          checked={config.tipo_tema === 'livre'}
+                          className="mt-0.5 h-4 w-4 accent-blue-600"
+                          name="tipo_tema"
+                          onChange={(event) => {
+                            if (event.target.checked) setConfig((atual) => ({ ...atual, tipo_tema: 'livre' }))
+                          }}
+                          type="radio"
+                          value="livre"
+                        />
+                        <span>
+                          <span className="block font-medium">Tema livre</span>
+                          <span className="mt-1 block text-xs text-slate-500">Os alunos informam o tema do projeto na inscrição.</span>
+                        </span>
+                      </label>
+                      <label className="flex items-start gap-3 rounded-lg border border-slate-200 p-4 text-sm text-slate-700">
+                        <input
+                          checked={config.tipo_tema === 'pre_definido'}
+                          className="mt-0.5 h-4 w-4 accent-blue-600"
+                          name="tipo_tema"
+                          onChange={(event) => {
+                            if (event.target.checked) setConfig((atual) => ({ ...atual, tipo_tema: 'pre_definido' }))
+                          }}
+                          type="radio"
+                          value="pre_definido"
+                        />
+                        <span>
+                          <span className="block font-medium">Temas pré-definidos</span>
+                          <span className="mt-1 block text-xs text-slate-500">Os alunos escolhem entre os temas cadastrados para esta turma.</span>
+                        </span>
+                      </label>
+                    </fieldset>
+
+                    {config.tipo_tema === 'pre_definido' && (
+                      <section aria-label="Temas pré-definidos da turma" className="space-y-4 rounded-lg border border-blue-100 bg-blue-50/50 p-4">
+                        <div>
+                          <h3 className="text-sm font-semibold text-slate-800">Temas desta turma</h3>
+                          <p className="mt-1 text-xs text-slate-500">Defina quantos grupos podem escolher cada tema. Temas já usados não podem ser removidos.</p>
+                        </div>
+
+                        <div className="space-y-3">
+                          {temas.map((tema) => {
+                            const gruposDoTema = grupos.filter((grupo) => grupo.tema_turma_id === tema.id).length
+                            const removendo = temaRemovendoId === tema.id
+                            return (
+                              <div className="grid gap-3 rounded-lg border border-slate-200 bg-white p-3 sm:grid-cols-[minmax(0,1fr)_10rem_auto_auto]" key={tema.id}>
+                                <label className="space-y-1 text-xs font-medium text-slate-600">
+                                  Título
+                                  <input
+                                    className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900"
+                                    maxLength={200}
+                                    onChange={(event) => setTemas((atuais) => atuais.map((atual) => atual.id === tema.id ? { ...atual, titulo: event.target.value } : atual))}
+                                    value={tema.titulo}
+                                  />
+                                </label>
+                                <label className="space-y-1 text-xs font-medium text-slate-600">
+                                  Limite de grupos
+                                  <input
+                                    className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900"
+                                    min={1}
+                                    onChange={(event) => setTemas((atuais) => atuais.map((atual) => atual.id === tema.id ? { ...atual, limite_grupos: Number(event.target.value) } : atual))}
+                                    type="number"
+                                    value={tema.limite_grupos}
+                                  />
+                                  <span className="block font-normal">{gruposDoTema} de {tema.limite_grupos} grupo(s)</span>
+                                </label>
+                                <button
+                                  className="self-end rounded-md border border-blue-200 px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-50"
+                                  disabled={temaAtualizandoId === tema.id || removendo}
+                                  onClick={() => void handleAtualizarTema(tema)}
+                                  type="button"
+                                >
+                                  {temaAtualizandoId === tema.id ? 'Salvando...' : 'Salvar'}
+                                </button>
+                                <button
+                                  aria-label={`Remover tema ${tema.titulo}`}
+                                  className="self-end rounded-md border border-red-200 p-2 text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                  disabled={gruposDoTema > 0 || removendo || temaAtualizandoId === tema.id}
+                                  onClick={() => void handleExcluirTema(tema)}
+                                  title={gruposDoTema > 0 ? 'Este tema já foi escolhido por um grupo' : 'Remover tema'}
+                                  type="button"
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                              </div>
+                            )
+                          })}
+                          {temas.length === 0 && (
+                            <p className="rounded-md border border-dashed border-slate-300 bg-white p-4 text-sm text-slate-500">Nenhum tema cadastrado para esta turma.</p>
+                          )}
+                        </div>
+
+                        <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_10rem_auto]">
+                          <label className="space-y-1 text-xs font-medium text-slate-600">
+                            Novo tema
+                            <input
+                              className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+                              maxLength={200}
+                              onChange={(event) => setNovoTemaTitulo(event.target.value)}
+                              placeholder="Título do tema"
+                              value={novoTemaTitulo}
+                            />
+                          </label>
+                          <label className="space-y-1 text-xs font-medium text-slate-600">
+                            Limite de grupos
+                            <input
+                              className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+                              min={1}
+                              onChange={(event) => setNovoTemaLimite(Number(event.target.value))}
+                              type="number"
+                              value={novoTemaLimite}
+                            />
+                          </label>
+                          <button
+                            className="inline-flex items-center justify-center gap-2 self-end rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                            disabled={salvandoTema || !novoTemaTitulo.trim() || novoTemaLimite < 1}
+                            onClick={() => void handleAdicionarTema()}
+                            type="button"
+                          >
+                            <Plus size={16} /> {salvandoTema ? 'Adicionando...' : 'Adicionar tema'}
+                          </button>
+                        </div>
+                      </section>
+                    )}
+
                     <label className="block max-w-xs space-y-1 text-sm font-medium text-slate-700">
                       Limite de alunos por grupo
                       <input

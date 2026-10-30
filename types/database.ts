@@ -1,6 +1,7 @@
 export interface Configuracao {
   id: number;
   turma_id: string | null;
+  tipo_tema: TipoTema;
   limite_alunos_min: number;
   limite_alunos_max: number;
   permitir_inscricoes: boolean;
@@ -8,6 +9,16 @@ export interface Configuracao {
   data_inicio_agendamento: string | null;
   data_fim_agendamento: string | null;
   mostrar_Integrantes: boolean;
+}
+
+export type TipoTema = "livre" | "pre_definido";
+
+export interface TemaTurma {
+  id: string;
+  turma_id: string;
+  titulo: string;
+  limite_grupos: number;
+  created_at: string;
 }
 
 export interface AlunoPermitido {
@@ -42,6 +53,7 @@ export interface Grupo {
   nome_grupo: string;
   turma_id: string;
   tema_projeto: string;
+  tema_turma_id: string | null;
   link_repositorio: string | null;
   data_apresentacao_id: string | null;
 }
@@ -92,9 +104,32 @@ export interface Database {
         Configuracao,
         Omit<Configuracao, "id"> & { id?: number }
       >;
+      temas_turma: TableDefinition<
+        TemaTurma,
+        Omit<TemaTurma, "id" | "created_at"> & {
+          id?: string;
+          created_at?: string;
+        }
+      >;
     };
     Views: Record<string, never>;
-    Functions: Record<string, never>;
+    Functions: {
+      listar_temas_turma: {
+        Args: { p_turma_id: string };
+        Returns: Array<TemaTurma & { grupos_ocupados: number }>;
+      };
+      criar_grupo_inscricao: {
+        Args: {
+          p_turma_id: string;
+          p_nome_grupo: string;
+          p_tema_projeto: string;
+          p_tema_turma_id: string | null;
+          p_data_apresentacao_id: string;
+          p_link_repositorio?: string | null;
+        };
+        Returns: string;
+      };
+    };
     Enums: Record<string, never>;
     CompositeTypes: Record<string, never>;
   };
