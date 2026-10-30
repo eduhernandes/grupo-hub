@@ -131,6 +131,22 @@ export interface Database {
         };
         Returns: string;
       };
+      editar_grupo_professor: {
+        Args: {
+          p_grupo_id: string;
+          p_nome_grupo: string;
+          p_tema_projeto: string;
+          p_tema_turma_id: string | null;
+          p_data_apresentacao_id: string | null;
+          p_alunos: Array<{
+            nome: string;
+            matricula: string;
+            email: string | null;
+            eh_lider: boolean;
+          }>;
+        };
+        Returns: string;
+      };
     };
     Enums: Record<string, never>;
     CompositeTypes: Record<string, never>;

@@ -106,9 +106,10 @@ A função encapsula a seguinte sequência transacional (`BEGIN ... COMMIT`):
 4. **Configurações por Turma:** Limite de alunos, janela de agendamento e visibilidade dos integrantes persistidos por `turma_id`.
 5. **CRUD Completo de Grupos:**
    - Visualização expandida de membros.
-   - Edição completa do grupo, integrantes e troca de data via RPC atômica.
+   - Edição completa do grupo, integrantes e troca de data via RPC atômica `editar_grupo_professor` (migration `20261030130000_edicao_atomica_grupo.sql`).
    - Exclusão de grupo com devolução automática da vaga ocupada.
    - Exportação da listagem completa em formato CSV.
+6. **Lista de Alunos Autorizados:** Edição de nome e matrícula vinculada à turma selecionada.
 
 ---
 

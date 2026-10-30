@@ -20,6 +20,7 @@ import { createBrowserClient } from '@supabase/ssr'
 import { useRouter } from 'next/navigation'
 import ModalAdicionarAluno from './components/ModalAdicionarAluno'
 import ModalCadastrarHorario from './components/ModalCadastrarHorario'
+import ModalEditarGrupo from './components/ModalEditarGrupo'
 import ModalImportarCSV from './components/ModalImportarCSV'
 import type {
   Aluno,
@@ -172,6 +173,10 @@ export default function PainelProfessor() {
   const [erroTurma, setErroTurma] = useState<string | null>(null)
   const [erroAcao, setErroAcao] = useState<string | null>(null)
   const [alunoRemovendo, setAlunoRemovendo] = useState<string | null>(null)
+  const [alunoEditandoId, setAlunoEditandoId] = useState<string | null>(null)
+  const [alunoEditandoNome, setAlunoEditandoNome] = useState('')
+  const [alunoEditandoMatricula, setAlunoEditandoMatricula] = useState('')
+  const [alunoSalvandoId, setAlunoSalvandoId] = useState<string | null>(null)
   const [realtimeStatus, setRealtimeStatus] = useState<'connecting' | 'connected' | 'offline'>('connecting')
 
   const [config, setConfig] = useState<ConfiguracaoForm>(configuracaoPadrao)
@@ -188,6 +193,7 @@ export default function PainelProfessor() {
   const [modalAlunoAberto, setModalAlunoAberto] = useState(false)
   const [modalCsvAberto, setModalCsvAberto] = useState(false)
   const [modalHorarioAberto, setModalHorarioAberto] = useState(false)
+  const [grupoEditando, setGrupoEditando] = useState<GrupoComAlunos | null>(null)
   const [slotEditando, setSlotEditando] = useState<DataApresentacao | null>(null)
   const [slotExcluindoId, setSlotExcluindoId] = useState<string | null>(null)
 
@@ -493,6 +499,45 @@ export default function PainelProfessor() {
       setErroAcao(`Não foi possível excluir o aluno: ${getErrorMessage(error)}`)
     } finally {
       setAlunoRemovendo(null)
+    }
+  }
+
+  const iniciarEdicaoAluno = (aluno: AlunoPermitido) => {
+    setAlunoEditandoId(aluno.id)
+    setAlunoEditandoNome(aluno.nome)
+    setAlunoEditandoMatricula(aluno.matricula)
+    setErroAcao(null)
+  }
+
+  const handleSalvarAluno = async (event: FormEvent<HTMLFormElement>, aluno: AlunoPermitido) => {
+    event.preventDefault()
+    const nome = alunoEditandoNome.trim()
+    const matricula = alunoEditandoMatricula.trim()
+    if (!nome || !matricula) {
+      setErroAcao('Informe o nome e a matrícula do aluno.')
+      return
+    }
+
+    try {
+      setAlunoSalvandoId(aluno.id)
+      setErroAcao(null)
+      const { data, error } = await supabase
+        .from('alunos_permitidos')
+        .update({ nome, matricula })
+        .eq('id', aluno.id)
+        .eq('turma_id', turmaId)
+        .select('id')
+        .maybeSingle()
+
+      if (error) throw error
+      if (!data) throw new Error('O aluno não foi encontrado nesta turma.')
+      await atualizarDadosTurma()
+      setAlunoEditandoId(null)
+    } catch (error) {
+      console.error('Erro ao editar aluno permitido:', error)
+      setErroAcao(`Não foi possível editar o aluno: ${getErrorMessage(error)}`)
+    } finally {
+      setAlunoSalvandoId(null)
     }
   }
 
@@ -861,6 +906,7 @@ export default function PainelProfessor() {
                             <th className="px-5 py-3 font-semibold">Tema</th>
                             <th className="px-5 py-3 font-semibold">Integrantes</th>
                             <th className="px-5 py-3 font-semibold">Apresentação</th>
+                            <th className="px-5 py-3 text-right font-semibold">Ações</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
@@ -879,6 +925,16 @@ export default function PainelProfessor() {
                                   {slot
                                     ? `${formatarDataHora(slot.data_hora)}${slot.data_hora_fim ? ` – ${horarioDoSlot(slot.data_hora_fim)}` : ''}`
                                     : 'Sem horário'}
+                                </td>
+                                <td className="px-5 py-4 text-right">
+                                  <button
+                                    aria-label={`Editar grupo ${grupo.nome_grupo}`}
+                                    className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                                    onClick={() => setGrupoEditando(grupo)}
+                                    type="button"
+                                  >
+                                    <Pencil size={15} /> Editar
+                                  </button>
                                 </td>
                               </tr>
                             )
@@ -923,20 +979,71 @@ export default function PainelProfessor() {
                           <tr><td className="px-5 py-10 text-center text-slate-500" colSpan={3}>Nenhum aluno cadastrado nesta turma.</td></tr>
                         ) : alunos.map((aluno) => (
                           <tr key={aluno.id}>
-                            <td className="px-5 py-3.5 font-mono text-xs text-slate-700">{aluno.matricula}</td>
-                            <td className="px-5 py-3.5 font-medium text-slate-800">{aluno.nome}</td>
-                            <td className="px-5 py-3.5 text-right">
-                              <button
-                                aria-label={`Excluir ${aluno.nome}`}
-                                className="rounded-md p-2 text-slate-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-40"
-                                disabled={alunoRemovendo === aluno.matricula}
-                                onClick={() => void handleExcluirAluno(aluno)}
-                                title="Excluir aluno"
-                                type="button"
-                              >
-                                <Trash2 size={16} />
-                              </button>
-                            </td>
+                            {alunoEditandoId === aluno.id ? (
+                              <td className="px-5 py-3.5" colSpan={3}>
+                                <form className="grid gap-3 sm:grid-cols-[1fr_2fr_auto_auto]" onSubmit={(event) => void handleSalvarAluno(event, aluno)}>
+                                  <label className="sr-only" htmlFor={`matricula-${aluno.id}`}>Matrícula</label>
+                                  <input
+                                    autoFocus
+                                    className="rounded-md border border-slate-300 px-3 py-2 font-mono text-xs"
+                                    id={`matricula-${aluno.id}`}
+                                    maxLength={50}
+                                    onChange={(event) => setAlunoEditandoMatricula(event.target.value)}
+                                    required
+                                    value={alunoEditandoMatricula}
+                                  />
+                                  <label className="sr-only" htmlFor={`nome-${aluno.id}`}>Nome completo</label>
+                                  <input
+                                    className="rounded-md border border-slate-300 px-3 py-2 text-sm"
+                                    id={`nome-${aluno.id}`}
+                                    maxLength={150}
+                                    onChange={(event) => setAlunoEditandoNome(event.target.value)}
+                                    required
+                                    value={alunoEditandoNome}
+                                  />
+                                  <button
+                                    className="rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                                    disabled={alunoSalvandoId === aluno.id}
+                                    type="submit"
+                                  >
+                                    {alunoSalvandoId === aluno.id ? 'Salvando...' : 'Salvar'}
+                                  </button>
+                                  <button
+                                    className="rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50"
+                                    onClick={() => setAlunoEditandoId(null)}
+                                    type="button"
+                                  >
+                                    Cancelar
+                                  </button>
+                                </form>
+                              </td>
+                            ) : (
+                              <>
+                                <td className="px-5 py-3.5 font-mono text-xs text-slate-700">{aluno.matricula}</td>
+                                <td className="px-5 py-3.5 font-medium text-slate-800">{aluno.nome}</td>
+                                <td className="px-5 py-3.5 text-right">
+                                  <button
+                                    aria-label={`Editar ${aluno.nome}`}
+                                    className="rounded-md p-2 text-slate-400 hover:bg-blue-50 hover:text-blue-600"
+                                    onClick={() => iniciarEdicaoAluno(aluno)}
+                                    title="Editar aluno"
+                                    type="button"
+                                  >
+                                    <Pencil size={16} />
+                                  </button>
+                                  <button
+                                    aria-label={`Excluir ${aluno.nome}`}
+                                    className="rounded-md p-2 text-slate-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-40"
+                                    disabled={alunoRemovendo === aluno.matricula}
+                                    onClick={() => void handleExcluirAluno(aluno)}
+                                    title="Excluir aluno"
+                                    type="button"
+                                  >
+                                    <Trash2 size={16} />
+                                  </button>
+                                </td>
+                              </>
+                            )}
                           </tr>
                         ))}
                       </tbody>
@@ -1262,6 +1369,18 @@ export default function PainelProfessor() {
         onSuccess={atualizarDadosTurma}
         turmaId={turmaId}
       />
+      {grupoEditando && (
+        <ModalEditarGrupo
+          datas={datas}
+          grupo={grupoEditando}
+          maximoAlunos={config.limite_alunos_grupo}
+          minimoAlunos={config.limite_alunos_min}
+          onClose={() => setGrupoEditando(null)}
+          onSuccess={atualizarDadosTurma}
+          temas={temas}
+          tipoTema={config.tipo_tema}
+        />
+      )}
       <ModalImportarCSV
         isOpen={modalCsvAberto}
         onClose={() => setModalCsvAberto(false)}
