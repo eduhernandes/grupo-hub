@@ -225,7 +225,7 @@ export default function PainelProfessor() {
           .order('data_hora'),
         supabase
           .from('grupos')
-          .select('id, nome_grupo, disciplina, turma_id, tema_projeto, tema_turma_id, link_repositorio, data_apresentacao_id')
+          .select('id, nome_grupo, disciplina, turma, turma_id, tema_projeto, tema_turma_id, link_repositorio, data_apresentacao_id')
           .eq('turma_id', id)
           .order('nome_grupo'),
         supabase.from('configuracoes').select('*').eq('turma_id', id).maybeSingle(),
