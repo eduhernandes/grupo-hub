@@ -22,6 +22,11 @@ O banco de dados segue um modelo relacional normalizado para suportar múltiplas
                        +---1---N [grupos] 1---N [alunos]
                        |
                        +---1---N [alunos_permitidos]
+                       +---1---N [rubricas]
+
+[grupos] 1---0..1 [avaliacoes_grupos] 1---N [notas_rubricas]
+   |
+   +---1---N [ajustes_individuais]
 ```
 
 ### Esquema de Tabelas
@@ -77,6 +82,13 @@ O banco de dados segue um modelo relacional normalizado para suportar múltiplas
    - `data_inicio_agendamento` / `data_fim_agendamento` (TIMESTAMP WITH TIME ZONE)
    - `mostrar_Integrantes` (BOOLEAN, default true)
 
+8. **Avaliação de projetos** (migration `20261102221200_avaliacao_projetos.sql`):
+   - `rubricas`: critérios por turma, com título e valor máximo.
+   - `avaliacoes_grupos`: feedback geral e vínculo único com grupo/turma.
+   - `notas_rubricas`: nota atribuída por critério da avaliação.
+   - `ajustes_individuais`: pontos (positivos ou negativos) e motivo por matrícula.
+   - A RPC `salvar_avaliacao_grupo` valida o grupo, rubricas e integrantes e grava feedback, notas e ajustes em uma única transação.
+
 ---
 
 ## 3. Garantia de Consistência e Transações Atômicas (RPC)
@@ -112,6 +124,10 @@ A função encapsula a seguinte sequência transacional (`BEGIN ... COMMIT`):
 6. **Lista de Alunos Autorizados:** Edição de nome e matrícula vinculada à turma selecionada.
 
 ---
+
+### 4.3. Fluxo de Avaliação de Projetos
+
+O professor seleciona um grupo da turma, registra observações e notas para cada rubrica e define ajustes por aluno. A nota final exibida soma a nota base do grupo aos pontos individuais; o salvamento é executado atomicamente pela RPC `salvar_avaliacao_grupo`.
 
 ## 5. Estrutura do Projeto
 

@@ -21,6 +21,38 @@ export interface TemaTurma {
   created_at: string;
 }
 
+export interface Rubrica {
+  id: string;
+  turma_id: string;
+  titulo: string;
+  valor_maximo: number;
+  created_at: string;
+}
+
+export interface AvaliacaoGrupo {
+  id: string;
+  grupo_id: string;
+  turma_id: string;
+  observacoes: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface NotaRubrica {
+  id: string;
+  avaliacao_grupo_id: string;
+  rubrica_id: string;
+  nota_atribuida: number;
+}
+
+export interface AjusteIndividual {
+  id: string;
+  grupo_id: string;
+  matricula_aluno: string;
+  pontos: number;
+  motivo: string;
+}
+
 export interface AlunoPermitido {
   id: string;
   turma_id: string;
@@ -113,6 +145,29 @@ export interface Database {
           created_at?: string;
         }
       >;
+      rubricas: TableDefinition<
+        Rubrica,
+        Omit<Rubrica, "id" | "created_at"> & {
+          id?: string;
+          created_at?: string;
+        }
+      >;
+      avaliacoes_grupos: TableDefinition<
+        AvaliacaoGrupo,
+        Omit<AvaliacaoGrupo, "id" | "created_at" | "updated_at"> & {
+          id?: string;
+          created_at?: string;
+          updated_at?: string;
+        }
+      >;
+      notas_rubricas: TableDefinition<
+        NotaRubrica,
+        Omit<NotaRubrica, "id"> & { id?: string }
+      >;
+      ajustes_individuais: TableDefinition<
+        AjusteIndividual,
+        Omit<AjusteIndividual, "id"> & { id?: string }
+      >;
     };
     Views: Record<string, never>;
     Functions: {
@@ -143,6 +198,23 @@ export interface Database {
             matricula: string;
             email: string | null;
             eh_lider: boolean;
+          }>;
+        };
+        Returns: string;
+      };
+      salvar_avaliacao_grupo: {
+        Args: {
+          p_grupo_id: string;
+          p_turma_id: string;
+          p_observacoes: string;
+          p_notas: Array<{
+            rubrica_id: string;
+            nota_atribuida: number;
+          }>;
+          p_ajustes: Array<{
+            matricula_aluno: string;
+            pontos: number;
+            motivo: string;
           }>;
         };
         Returns: string;

@@ -5,6 +5,7 @@ import {
   CalendarDays,
   CheckCircle2,
   Clock3,
+  ClipboardCheck,
   FileUp,
   GraduationCap,
   LogOut,
@@ -22,6 +23,7 @@ import ModalAdicionarAluno from './components/ModalAdicionarAluno'
 import ModalCadastrarHorario from './components/ModalCadastrarHorario'
 import ModalEditarGrupo from './components/ModalEditarGrupo'
 import ModalImportarCSV from './components/ModalImportarCSV'
+import PainelAvaliacoes from './components/PainelAvaliacoes'
 import type {
   Aluno,
   AlunoPermitido,
@@ -34,7 +36,7 @@ import type {
   Turma,
 } from '@/types/database'
 
-type Aba = 'grupos' | 'alunos' | 'horarios' | 'config'
+type Aba = 'grupos' | 'avaliacoes' | 'alunos' | 'horarios' | 'config'
 type ConfiguracaoForm = Omit<
   Pick<
     Configuracao,
@@ -734,6 +736,7 @@ export default function PainelProfessor() {
 
   const abas: Array<{ id: Aba; titulo: string; icon: typeof CalendarDays }> = [
     { id: 'grupos', titulo: 'Agendamentos & Grupos', icon: CalendarDays },
+    { id: 'avaliacoes', titulo: 'Avaliações', icon: ClipboardCheck },
     { id: 'alunos', titulo: 'Lista de Alunos', icon: Users },
     { id: 'horarios', titulo: 'Datas e Horários', icon: Clock3 },
     { id: 'config', titulo: 'Configurações', icon: Settings },
@@ -945,6 +948,10 @@ export default function PainelProfessor() {
                   </div>
                 )}
               </section>
+            )}
+
+            {abaAtiva === 'avaliacoes' && (
+              <PainelAvaliacoes grupos={grupos} key={turmaId} turmaId={turmaId} />
             )}
 
             {abaAtiva === 'alunos' && (
