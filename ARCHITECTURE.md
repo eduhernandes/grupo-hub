@@ -127,7 +127,7 @@ A função encapsula a seguinte sequência transacional (`BEGIN ... COMMIT`):
 
 ### 4.3. Fluxo de Avaliação de Projetos
 
-O professor seleciona um grupo da turma, registra observações e notas para cada rubrica e define ajustes por aluno. A nota final exibida soma a nota base do grupo aos pontos individuais; o salvamento é executado atomicamente pela RPC `salvar_avaliacao_grupo`.
+O professor gerencia os critérios da turma, adicionando rubricas individualmente ou importando um CSV com `titulo,valor_maximo`. Rubricas já utilizadas em notas não podem ser excluídas. Em seguida, seleciona um grupo, registra observações e notas para cada rubrica e define ajustes por aluno. A nota final exibida soma a nota base do grupo aos pontos individuais; o salvamento é executado atomicamente pela RPC `salvar_avaliacao_grupo`.
 
 ## 5. Estrutura do Projeto
 
@@ -136,7 +136,11 @@ O professor seleciona um grupo da turma, registra observações e notas para cad
 ├── app/                         # App Router do Next.js
 │   ├── page.tsx                 # Tela pública de Inscrição (Alunos)
 │   ├── professor/
-│   │   └── page.tsx             # Painel Administrativo (Professor)
+│   │   ├── page.tsx             # Painel Administrativo (Professor)
+│   │   └── components/
+│   │       ├── PainelAvaliacoes.tsx
+│   │       ├── ModalAdicionarRubrica.tsx
+│   │       └── ModalImportarRubricasCSV.tsx
 │   └── layout.tsx               # Layout global
 ├── lib/
 │   └── supabase.ts              # Instância do cliente Supabase

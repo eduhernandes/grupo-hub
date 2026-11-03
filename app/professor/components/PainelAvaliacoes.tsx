@@ -2,8 +2,10 @@
 
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { createBrowserClient } from '@supabase/ssr'
-import { Award, Save } from 'lucide-react'
+import { Award, FileUp, Plus, Save, Trash2 } from 'lucide-react'
 import type { Aluno, Database, Grupo, Rubrica } from '@/types/database'
+import ModalAdicionarRubrica from './ModalAdicionarRubrica'
+import ModalImportarRubricasCSV from './ModalImportarRubricasCSV'
 
 interface GrupoComAlunos extends Grupo {
   alunos: Aluno[]
@@ -44,6 +46,9 @@ export default function PainelAvaliacoes({
   const [loadingRubricas, setLoadingRubricas] = useState(true)
   const [grupoAvaliacaoCarregadaId, setGrupoAvaliacaoCarregadaId] = useState('')
   const [salvando, setSalvando] = useState(false)
+  const [rubricaRemovendoId, setRubricaRemovendoId] = useState<string | null>(null)
+  const [modalAdicionarAberto, setModalAdicionarAberto] = useState(false)
+  const [modalImportarAberto, setModalImportarAberto] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
   const [sucesso, setSucesso] = useState<string | null>(null)
 
@@ -55,6 +60,17 @@ export default function PainelAvaliacoes({
     (total, rubrica) => total + Number(notas[rubrica.id] ?? 0),
     0
   )
+
+  const atualizarRubricas = async (): Promise<void> => {
+    const { data, error: queryError } = await supabase
+      .from('rubricas')
+      .select('id, turma_id, titulo, valor_maximo, created_at')
+      .eq('turma_id', turmaId)
+      .order('titulo')
+
+    if (queryError) throw queryError
+    setRubricas(data ?? [])
+  }
 
   useEffect(() => {
     let active = true
@@ -83,6 +99,43 @@ export default function PainelAvaliacoes({
       active = false
     }
   }, [supabase, turmaId])
+
+  const handleExcluirRubrica = async (rubrica: Rubrica) => {
+    if (
+      !window.confirm(
+        `Deseja excluir o critério "${rubrica.titulo}"? Critérios já usados em avaliações não podem ser excluídos.`
+      )
+    ) {
+      return
+    }
+
+    try {
+      setRubricaRemovendoId(rubrica.id)
+      setErro(null)
+      setSucesso(null)
+
+      const { error: deleteError } = await supabase
+        .from('rubricas')
+        .delete()
+        .eq('id', rubrica.id)
+        .eq('turma_id', turmaId)
+
+      if (deleteError) {
+        if ('code' in deleteError && deleteError.code === '23503') {
+          throw new Error('Este critério já foi usado em uma avaliação e não pode ser excluído.')
+        }
+        throw deleteError
+      }
+
+      await atualizarRubricas()
+      setSucesso(`Critério "${rubrica.titulo}" excluído.`)
+    } catch (error) {
+      console.error('Erro ao excluir rubrica:', error)
+      setErro(`Não foi possível excluir o critério: ${getErrorMessage(error)}`)
+    } finally {
+      setRubricaRemovendoId(null)
+    }
+  }
 
   useEffect(() => {
     if (!grupoSelecionado) return
@@ -171,7 +224,7 @@ export default function PainelAvaliacoes({
       setErro(null)
       setSucesso(null)
       const notasPayload = rubricas.map((rubrica) => {
-        const valor = Number(notas[rubrica.id])
+        const valor = Number(notas[rubrica.id] ?? '0')
         if (!Number.isFinite(valor) || valor < 0 || valor > rubrica.valor_maximo) {
           throw new Error(
             `A nota de "${rubrica.titulo}" deve estar entre 0 e ${rubrica.valor_maximo}.`
@@ -231,6 +284,67 @@ export default function PainelAvaliacoes({
           {sucesso}
         </p>
       )}
+
+      <section className="space-y-4 rounded-xl border border-slate-200 bg-white p-5">
+        <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+          <div>
+            <h3 className="font-semibold text-slate-900">Critérios da turma</h3>
+            <p className="text-sm text-slate-500">
+              Gerencie as rubricas e seus valores máximos para esta turma.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              onClick={() => setModalImportarAberto(true)}
+              type="button"
+            >
+              <FileUp size={16} /> Importar Rubricas via CSV
+            </button>
+            <button
+              className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+              onClick={() => setModalAdicionarAberto(true)}
+              type="button"
+            >
+              <Plus size={16} /> Adicionar Critério
+            </button>
+          </div>
+        </div>
+
+        {loadingRubricas ? (
+          <p className="text-sm text-slate-500" role="status">Carregando critérios...</p>
+        ) : rubricas.length === 0 ? (
+          <p className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500">
+            Nenhum critério cadastrado para esta turma.
+          </p>
+        ) : (
+          <ul className="divide-y divide-slate-100 rounded-lg border border-slate-100">
+            {rubricas.map((rubrica) => (
+              <li
+                className="flex items-center justify-between gap-3 px-4 py-3"
+                key={rubrica.id}
+              >
+                <span className="text-sm font-medium text-slate-800">{rubrica.titulo}</span>
+                <div className="flex items-center gap-3">
+                  <span className="text-sm text-slate-600">
+                    Máximo: {rubrica.valor_maximo}
+                  </span>
+                  <button
+                    aria-label={`Excluir critério ${rubrica.titulo}`}
+                    className="rounded-md p-2 text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={rubricaRemovendoId === rubrica.id}
+                    onClick={() => void handleExcluirRubrica(rubrica)}
+                    title="Excluir critério"
+                    type="button"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
 
       <label className="block max-w-xl space-y-1 text-sm font-medium text-slate-700">
         Grupo da turma
@@ -406,6 +520,19 @@ export default function PainelAvaliacoes({
           </div>
         </form>
       )}
+
+      <ModalAdicionarRubrica
+        isOpen={modalAdicionarAberto}
+        onClose={() => setModalAdicionarAberto(false)}
+        onSuccess={atualizarRubricas}
+        turmaId={turmaId}
+      />
+      <ModalImportarRubricasCSV
+        isOpen={modalImportarAberto}
+        onClose={() => setModalImportarAberto(false)}
+        onSuccess={atualizarRubricas}
+        turmaId={turmaId}
+      />
     </section>
   )
 }
