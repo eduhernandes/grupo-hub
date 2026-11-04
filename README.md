@@ -17,6 +17,7 @@ A plataforma conecta professores e alunos através de uma interface moderna e in
 * **Gestão de Disciplinas e Turmas:** Organização hierárquica completa para múltiplos períodos ou turmas.
 * **Agendamento de Bancas:** Definição de datas/horários por turma com ajuste dinâmico do total de vagas.
 * **Importação da Lista de Alunos (CSV):** Cadastro em massa de alunos por turma via upload de arquivo `.csv`.
+* **Alunos sem Grupo:** Lista de alunos autorizados que ainda não estão associados a nenhum grupo da turma selecionada.
 * **Gerenciamento Completo de Grupos (CRUD):** Visualização de membros, ajuste de tema, troca atômica de data e exclusão com devolução automática de vagas.
 * **Exportação de Dados:** Exportação em um clique de todos os grupos e inscritos no formato CSV.
 

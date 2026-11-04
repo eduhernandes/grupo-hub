@@ -15,6 +15,7 @@ import {
   Settings,
   Trash2,
   UserPlus,
+  UserX,
   Users,
 } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
@@ -114,6 +115,13 @@ function horarioDoSlot(value: string): string {
   }).format(new Date(value))
 }
 
+function normalizarMatricula(value: string): string {
+  const matricula = value.trim()
+  return /^\d+$/.test(matricula)
+    ? matricula.replace(/^0+(?=\d)/, '')
+    : matricula.toLocaleLowerCase()
+}
+
 function mapearConfiguracao(data: Configuracao | null): ConfiguracaoForm {
   if (!data) return configuracaoPadrao
 
@@ -202,6 +210,12 @@ export default function PainelProfessor() {
   const disciplinaAtiva = disciplinas.find((disciplina) => disciplina.id === disciplinaId)
   const turmaAtiva = turmas.find((turma) => turma.id === turmaId)
   const turmasDaDisciplina = turmas.filter((turma) => turma.disciplina_id === disciplinaId)
+  const matriculasEmGrupos = new Set(
+    grupos.flatMap((grupo) => grupo.alunos.map((aluno) => normalizarMatricula(aluno.matricula)))
+  )
+  const alunosSemGrupo = alunos.filter(
+    (aluno) => !matriculasEmGrupos.has(normalizarMatricula(aluno.matricula))
+  )
 
   const buscarCatalogo = useCallback(async () => {
     const [disciplinasResult, turmasResult] = await Promise.all([
@@ -970,6 +984,53 @@ export default function PainelProfessor() {
                     </button>
                   </div>
                 </div>
+
+                <section
+                  aria-labelledby="alunos-sem-grupo-titulo"
+                  className="rounded-xl border border-amber-200 bg-amber-50/70 p-5"
+                >
+                  <div className="flex items-start gap-3">
+                    <UserX aria-hidden="true" className="mt-0.5 shrink-0 text-amber-700" size={20} />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h3
+                          className="font-semibold text-amber-950"
+                          id="alunos-sem-grupo-titulo"
+                        >
+                          Alunos sem Grupo (Pendentes)
+                        </h3>
+                        <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-900">
+                          {alunosSemGrupo.length}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-sm text-amber-900/80">
+                        Alunos autorizados que ainda não aparecem como integrantes de nenhum grupo desta turma.
+                      </p>
+
+                      {alunosSemGrupo.length === 0 ? (
+                        <p className="mt-3 rounded-lg bg-white/70 px-3 py-2 text-sm text-emerald-800">
+                          Todos os alunos autorizados já estão associados a um grupo.
+                        </p>
+                      ) : (
+                        <ul className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                          {alunosSemGrupo.map((aluno) => (
+                            <li
+                              className="rounded-lg border border-amber-100 bg-white px-3 py-2"
+                              key={aluno.id}
+                            >
+                              <span className="block text-sm font-medium text-slate-800">
+                                {aluno.nome}
+                              </span>
+                              <span className="font-mono text-xs text-slate-500">
+                                Matrícula: {aluno.matricula}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  </div>
+                </section>
 
                 <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
                   <div className="overflow-x-auto">
