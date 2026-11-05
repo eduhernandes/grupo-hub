@@ -55,6 +55,8 @@ NEXT_PUBLIC_SUPABASE_URL=sua_url_do_supabase
 NEXT_PUBLIC_SUPABASE_ANON_KEY=sua_chave_anonima_do_supabase
 ```
 
+Para desenvolver com o Supabase local, use a URL e a chave `Publishable` exibidas por `npx supabase start`. O painel do professor fica sem login somente em `npm run dev` quando essa URL aponta para `localhost`, `127.0.0.1` ou `[::1]`. O `supabase/seed.sql` concede acesso local de desenvolvimento às operações do painel e `supabase/seed_dados_teste.sql` insere dados fictícios (disciplinas, turmas, horários, grupos, alunos e avaliações). Ambos são aplicados com `npx supabase db reset`, que apaga os dados locais. Não use esses seeds em produção. Para carregar os dados fictícios sem resetar, execute `Get-Content -Raw supabase/seed_dados_teste.sql | docker exec -i supabase_db_grupo-hub psql -v ON_ERROR_STOP=1 -U postgres -d postgres` no PowerShell.
+
 ### 4. Executando a Aplicação
 
 ```bash

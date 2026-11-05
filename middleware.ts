@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@supabase/ssr'
+import { isLocalSupabaseDevelopment } from '@/lib/isLocalSupabaseDevelopment'
 
 // Lista de e-mails de professores autorizados a acessar o painel
 const EMAILS_AUTORIZADOS = [
@@ -7,6 +8,14 @@ const EMAILS_AUTORIZADOS = [
 ]
 
 export async function middleware(request: NextRequest) {
+  if (isLocalSupabaseDevelopment()) {
+    if (request.nextUrl.pathname.startsWith('/professor/login')) {
+      return NextResponse.redirect(new URL('/professor', request.url))
+    }
+
+    return NextResponse.next()
+  }
+
   let response = NextResponse.next({
     request: {
       headers: request.headers,

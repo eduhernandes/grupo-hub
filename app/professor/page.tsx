@@ -25,6 +25,7 @@ import ModalCadastrarHorario from './components/ModalCadastrarHorario'
 import ModalEditarGrupo from './components/ModalEditarGrupo'
 import ModalImportarCSV from './components/ModalImportarCSV'
 import PainelAvaliacoes from './components/PainelAvaliacoes'
+import { isLocalSupabaseDevelopment } from '@/lib/isLocalSupabaseDevelopment'
 import type {
   Aluno,
   AlunoPermitido,
@@ -766,9 +767,11 @@ export default function PainelProfessor() {
               Painel do Professor
             </span>
           </div>
-          <button className="flex items-center gap-2 text-sm text-slate-500 transition hover:text-red-600" onClick={() => void handleLogout()} type="button">
-            <LogOut size={16} /> Sair
-          </button>
+          {!isLocalSupabaseDevelopment() && (
+            <button className="flex items-center gap-2 text-sm text-slate-500 transition hover:text-red-600" onClick={() => void handleLogout()} type="button">
+              <LogOut size={16} /> Sair
+            </button>
+          )}
         </div>
       </header>
 
